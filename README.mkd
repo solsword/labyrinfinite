@@ -1,0 +1,13 @@
+# Labyrinfinite
+
+ #PROCJAM 2018
+
+Infinite 2-D labyrinth, with code for moving from point to point.
+
+## Dependencies
+
+Javascript
+
+## How to Run
+
+Open index.html.
