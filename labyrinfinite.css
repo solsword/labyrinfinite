@@ -1,0 +1,17 @@
+body {
+  text-align: center;
+  background: #444;
+  color: #fff;
+  font-family: serif;
+}
+
+canvas {
+  border: 2px solid #222;
+  background: #000;
+  border-radius: 4px;
+  position: absolute;
+  left: 5vw;
+  width: 90vw;
+  top: 5vh;
+  height: 90vh;
+}

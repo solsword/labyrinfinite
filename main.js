@@ -5,6 +5,9 @@
 // Global canvas context
 var CTX = undefined;
 
+// Global pattern list
+var PATTERNS = undefined;
+
 // Length of each trail
 var TRAIL_LENGTH = 15;
 
@@ -14,12 +17,19 @@ var MIN_SCALE = 24;
 // Speed at which to change scales (percentage of scale difference per second)
 var ZOOM_SPEED = 0.6
 
+// Size of each pattern
+var PATTERN_SIZE = 5;
+
 // --------------------
 // Onload Functionality
 // --------------------
 
 // Run when the document is loaded:
-document.onload = function () {
+window.onload = function () {
+  // Start pattern-loading process immediately
+  PATTERNS = reorganize_patterns(load_patterns())
+
+  // Grab canvas & context:
   let canvas = document.getElementById("labyrinth");
   CTX = canvas.getContext("2d");
 
@@ -27,6 +37,8 @@ document.onload = function () {
   update_canvas_size(canvas, CTX);
   set_scale(CTX, 1);
   set_destination(CTX, [0, 0]);
+
+  // Set up trails:
   CTX.trails = [
     { "seed": 19283801, "positions": [] },
     { "seed": 74982018, "positions": [] },
@@ -49,7 +61,7 @@ document.onload = function () {
     timer_id = setTimeout(
       function () {
         timer_id = undefined;
-        update_canvas_size();
+        update_canvas_size(canvas, CTX);
       },
       20 // milliseconds
     );
@@ -123,12 +135,12 @@ function event_pos(ctx, ev) {
   if (ev.touches) {
     ev = ev.touches[0];
   }
-  rturn pc__vc([ev.clientX, ev.clientY]);
+  return pc__vc(ctx, [ev.clientX, ev.clientY]);
 }
 
 function handle_tap(ctx, ev) {
   let vc = event_pos(ctx, ev);
-  let gc = wc__gc(cc__wc(vc__cc(vc)));
+  let gc = wc__gc(ctx, cc__wc(ctx, vc__cc(ctx, vc)));
   set_destination(ctx, gc);
 }
 
@@ -196,6 +208,78 @@ function gc__wc(ctx, gc) {
   ];
 }
 
+// Pattern coordinates <-> indices
+// pc is a [row, column] pair
+function pc__idx(pc) {
+  return pc[0] * PATTERN_SIZE + pc[1];
+}
+
+function idx__pc(idx) {
+  return [
+    Math.floor(idx / PATTERN_SIZE),
+    idx % PATTERN_SIZE
+  ];
+}
+
+// Edge + socket <-> edge ID
+function ec__eid(ec) {
+  return "" + ec[0] + ":" + ec[1];
+}
+
+function eid__ec(eid) {
+  return [
+    parseInt(eid[0]),
+    parseInt(eid.slice(2))
+  ]
+}
+
+// Edge + socket <-> pattern coordinates
+// pc is a [row, column] pair
+function ec__pc(ec) {
+  if (ec[0] == 0) {
+    return [ 0, ec[1]*2 ];
+  } else if (ec[0] == 1) {
+    return [ ec[1]*2, PATTERN_SIZE-1 ];
+  } else if (ec[0] == 2) {
+    return [ PATTERN_SIZE-1, ec[1]*2 ];
+  } else { // ec[0] == 3, we hope
+    return [ ec[1]*2, 0 ];
+  }
+}
+
+// horizonal is a hint as to whether corner coordinates are on horizontal
+// (top/bottom) or vertical (left/right) edges. Returns undefined if the
+// pattern coordinate isn't on an edge (but rounds non-socket edge coordinates
+// to the lesser socket they're between).
+function pc__ec(pc, horizonal) {
+  let vertical = !horizonal;
+  if (pc[0] == 0) { // top row
+    if (pc[1] == 0 && vertical) { // left edge top
+      return [ 3, 0 ];
+    } else if (pc[1] == PATTERN_SIZE - 1 && vertical) { // right edge top
+      return [ 1, 0 ];
+    } else { // top edge
+      return [ 0, Math.floor(pc[1]/2) ];
+    }
+  } else if (pc[0] == PATTERN_SIZE - 1) {
+    if (pc[1] == 0 && vertical) { // left edge bottom
+      return [ 3, PATTERN_SIZE - 1 ];
+    } else if (pc[1] == PATTERN_SIZE - 1 && vertical) { // right edge bottom
+      return [ 1, PATTERN_SIZE - 1 ];
+    } else { // bottom edge
+      return [ 2, Math.floor(pc[1]/2) ];
+    }
+  } else { // must be on a vertical (left or right) edge; not on a corner
+    if (pc[1] == 0) {
+      return [ 3, Math.floor(pc[0]/2) ];
+    } else if (pc[1] == PATTERN_SIZE - 1) {
+      return [ 1, Math.floor(pc[0]/2) ];
+    } else { // not on an edge
+      return undefined;
+    }
+  }
+}
+
 // ------------
 // Drawing Code
 // ------------
@@ -206,15 +290,16 @@ function draw_frame(now) {
 
   // Measure time
   let ms_time = window.performance.now();
-  if (CTX.previous_frame_time == undefined) {
-    CTX.previous_frame_time = ms_time;
+  if (CTX.now == undefined) {
+    CTX.now = ms_time;
     return; // skip this frame to get timing for the next one
   }
-  let elapsed = ms_time - CTX.previous_frame_time;
-  CTX.previous_frame_time = ms_time;
+  CTX.elapsed = ms_time - CTX.now;
+  CTX.now = ms_time;
 
-  adjust_scale(CTX, elapsed);
-  draw_labyrinth(CTX, elapsed);
+  // TODO: let user lock-out autoadjust
+  adjust_scale(CTX);
+  draw_labyrinth(CTX);
 }
 
 function interest_bb(ctx) {
@@ -232,11 +317,12 @@ function interest_bb(ctx) {
       if (pos[1] > result.bottom) { result.bottom = pos[1]; }
     }
   }
+  return result;
 }
 
-function adjust_scale(ctx, elapsed) {
+function adjust_scale(ctx) {
   // Adjusts the scaling factor according to points of interest
-  let ibb = interst_bb(ctx);
+  let ibb = interest_bb(ctx);
 
   let ideal_scale = Math.max(
     MIN_SCALE,
@@ -248,11 +334,11 @@ function adjust_scale(ctx, elapsed) {
 
   ctx.scale = Math.max(
     MIN_SCALE,
-    ctx.scale + ZOOM_SPEED * scale_diff * (elapsed / 1000)
+    ctx.scale + ZOOM_SPEED * scale_diff * (ctx.elapsed / 1000)
   );
 }
 
-function draw_labyrinth(ctx, elapsed) {
+function draw_labyrinth(ctx) {
   // Draws the visible portion of the labyrinth
   // TODO: HERE
 }
@@ -260,3 +346,102 @@ function draw_labyrinth(ctx, elapsed) {
 // --------------
 // Labyrinth Code
 // --------------
+
+j
+
+// ----------------------------
+// Pattern Loading & Management
+// ----------------------------
+
+function load_patterns() {
+  // Use with Chrome and --allow-file-access-from-files to run locally.
+  var xobj = new XMLHttpRequest();
+  xobj.overrideMimeType("application/json");
+  var url = window.location.href;
+  var path = url.substr(0, url.lastIndexOf('/'));
+  var dpath = path + "patterns.json";
+  var dpath = "patterns.json";
+
+  // Load asynchronously
+  xobj.open("GET", dpath);
+  xobj.onload = function () {
+    var successful = (
+      xobj.status == 200
+   || (xobj.status == 0 && dpath.startsWith("file://"))
+    );
+    if (!successful) {
+      console.error("Failed to load patterns from:\n" + dpath)
+      return undefined;
+    }
+    try {
+      return JSON.parse(xobj.responseText);
+    } catch (e) {
+      console.error("JS error while loading patterns from:\n" + dpath)
+      return undefined;
+    }
+  };
+  xobj.onerror = function () {
+    console.error("Request error while loading patterns from:\n" + dpath)
+    return undefined;
+  }
+  try {
+    xobj.send(null);
+  } catch (e) {
+    console.error("Send error while loading patterns from:\n" + dpath)
+    return undefined;
+  }
+}
+
+function rotate_pattern(p, r) {
+  // Returns a rotated version of a pattern (specified as a SIZE*SIZE-element
+  // next-list). Rotations are clockwise by 90 degrees each, up to 3.
+  r = ((r % 4) + 4) % 4;
+  let result = p;
+  for (let i = 0; i < r; ++i) {
+    result = result.map(x => pc__idx(clockwise(idx__pc(x))));
+  }
+  return result;
+}
+
+function clockwise(rc) {
+  // Returns the 90-degree clockwise rotation of the given row, col coordinates.
+  return [
+    rc[1],
+    (PATTERN_SIZE - 1) - rc[0]
+  ];
+}
+
+function reorganize_patterns(patterns) {
+  // Takes a raw patterns list and organizes it according to the input/output
+  // cells of each pattern. The incoming pattern list should list all patterns
+  // from left-side entrances to top, right, and bottom-side exits, without
+  // containing any rotations (but with reflections across the horizontal).
+  // Patterns are simply lists of indices covering 0 .. N^2-1, indicating the
+  // order in which cells in a square are visited.
+  // Entrances and exits are numbered:
+  //
+  //            0:0 - 0:1 - 0:2...0:N-1
+  //
+  //        3:0                         1:0
+  //         |                           |   
+  //        3:1                         1:1  
+  //         |                           |   
+  //        3:2                         1:2  
+  //        ...                         ...  
+  //        3:N-1                       1:N-1
+  //
+  //            2:0 - 2:1 - 2:2...2:N-1
+  //
+  let by_entrance = {};
+  let by_exit = {};
+
+  for (let p of patterns) {
+    // TODO: HERE
+  }
+
+  return {
+    "patterns": patterns,
+    "by_entrance": by_entrance,
+    "by_exit": by_exit,
+  }
+}
