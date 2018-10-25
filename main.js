@@ -20,8 +20,16 @@ var ZOOM_SPEED = 0.6
 // Size of each pattern
 var PATTERN_SIZE = 5;
 
-// The fractally increasing bilayer cache
+// The fractally increasing bilayer cache. Values in the process of being
+// generated are represented by null, while never-requested values are
+// undefined.
 var BILAYER_CACHE = [];
+
+// Delay (ms) before generation starts
+var GEN_START_DELAY = 0;
+
+// Delay (ms) between checking whether something can be generated
+var GEN_CHECK_DELAY = 8;
 
 // --------------------
 // Onload Functionality
@@ -319,7 +327,7 @@ function interest_bb(ctx) {
     "bottom": ctx.destination[1]
   }
   for (let trail of ctx.trails) {
-    for (let pos of trail.positions) {
+    for (let pos of trace.positions) {
       if (pos[0] < result.left) { result.left = pos[0]; }
       if (pos[0] > result.right) { result.right = pos[0]; }
       if (pos[1] < result.top) { result.top = pos[1]; }
@@ -389,23 +397,23 @@ function posmod(n, base) {
 // absolute coordinate that's more distant from the origin.
 //
 // Fractal coordinates consist of a height value and a list of coordinates
-// indicating a trail downwards from that height. A height of 0 indicates the
-// unit is an n×n region, 1 an n^2×n^2 region, and so on. Each entry in a trail
+// indicating a trace downwards from that height. A height of 0 indicates the
+// unit is an n×n region, 1 an n^2×n^2 region, and so on. Each entry in a trace
 // is an index between 0 and n^2-1 that indicates which sub-cell of the current
-// cell the location is within. The trail may be shorter than the height, in
+// cell the location is within. The trace may be shorter than the height, in
 // which case the fractal coordinates denote a bilayer above the base grid
 // cells.
 
 function fr__ac(fr) {
   let height = fr[0];
-  let trail = fr[1];
+  let trace = fr[1];
 
   let cw = Math.pow(5, height); // width of a single cell
   let result = [0, 0]; // center coordinates at the top are always 0, 0.
 
   // Trace down through each bilayer:
-  for (let i = 0; i < trail.length; ++i) {
-    let pc = idx__pc(trail[i]);
+  for (let i = 0; i < trace.length; ++i) {
+    let pc = idx__pc(trace[i]);
     let row = pc[0];
     let col = pc[1];
     result[0] += (col - Math.floor(PATTERN_SIZE/2)) * cw;
@@ -423,7 +431,7 @@ function ac__fr(ac) {
   let height = Math.floor(Math.log(distance*2) / Math.log(PATTERN_SIZE));
   let cw = Math.pow(5, height);
 
-  let trail = [];
+  let trace = [];
   let rc = ac; // relative coordinates
 
   pc = [ // compute first local pattern coordinates
@@ -431,8 +439,8 @@ function ac__fr(ac) {
     Math.floor(rc[0] / cw)
   ];
 
-  // push first index onto trail
-  trail.push(pc__idx(pc));
+  // push first index onto trace
+  trace.push(pc__idx(pc));
 
   for (let i = 0; i < height; ++i) { // doesn't iterate for height == 0
     rc = [ // update our relative coordinates
@@ -448,11 +456,11 @@ function ac__fr(ac) {
       Math.floor(rc[0] / cw)
     ];
 
-    // push index onto trail
-    trail.push(pc__idx(pc));
+    // push index onto trace
+    trace.push(pc__idx(pc));
   }
 
-  return [height, trail];
+  return [height, trace];
 }
 
 function fr__edge_ac(fr, edge) {
@@ -462,8 +470,8 @@ function fr__edge_ac(fr, edge) {
   let ac = fr__ac(fr);
 
   let height = fr[0];
-  let trail = fr[1];
-  let edge_height = height - trail.length
+  let trace = fr[1];
+  let edge_height = height - trace.length
 
   let pw = Math.pow(5, edge_height+1); // width of a pattern
 
@@ -486,12 +494,12 @@ function fr__edge_ac(fr, edge) {
 function bilayer_seed(fr_coords) {
   // Determines the seed for the given fractal coordinate location.
   let height = fr_coords[0];
-  let trail = fr_coords[1];
+  let trace = fr_coords[1];
   let seed = 1700191983;
   for (let i = 0; i < height; ++i) {
     seed = lfsr(seed);
   }
-  for (let sidx of trail) {
+  for (let sidx of trace) {
     seed = lfsr(seed + (seed+1)*sidx);
   }
 
@@ -514,14 +522,46 @@ function edge_seed(fr_coords, edge) {
   return mix;
 }
 
+function central_coords(height) {
+  // Returns the fractal coordinates for the central bilayer at the given
+  // height.
+  let trace = [];
+  let center = Math.floor((PATTERN_SIZE * PATTERN_SIZE) / 2);
+  for (let h = 0; h < height; ++h) {
+    trace.push(center);
+  }
+}
+
 // ------------------
 // Caching and Lookup
 // ------------------
 
+function request_central_bilayer(height) {
+  let fr_coords = central_coords(height);
+  for (h = 0; h < height; ++h) {
+    if (BILAYER_CACHE[h] == undefined) {
+      BILAYER_CACHE[h] = null;
+      window.setTimeout(
+        eventually_generate_bilayer,
+        GEN_START_DELAY,
+        [ height, 
+      )
+    }
+  }
+    j
+  if (height > 0 && BILAYER_CACHE[height-1] == undefined) {
+    request_central_bilayer(height-1);
+    BILAYER_CACHE[height-1]
+  }
+}
+
 function lookup_bilayer(fr_coords) {
   // Looks up bilayer information, returning undefined until info has been
   // generated.
+  let height = fr_coords[0];
+  let trace = fr_coords[1];
   if (len(BILAYER_CACHE) < fr_coords + 1) {
+    request_central_bilayer(len(trace) - 1);
     // TODO: Trigger generation here!
     return undefined;
   }
