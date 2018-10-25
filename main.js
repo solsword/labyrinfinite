@@ -20,6 +20,9 @@ var ZOOM_SPEED = 0.6
 // Size of each pattern
 var PATTERN_SIZE = 5;
 
+// The fractally increasing bilayer cache
+var BILAYER_CACHE = [];
+
 // --------------------
 // Onload Functionality
 // --------------------
@@ -249,8 +252,8 @@ function ec__pc(ec) {
 
 // horizonal is a hint as to whether corner coordinates are on horizontal
 // (top/bottom) or vertical (left/right) edges. Returns undefined if the
-// pattern coordinate isn't on an edge (but rounds non-socket edge coordinates
-// to the lesser socket they're between).
+// pattern coordinate isn't on an edge of the specified type (but rounds
+// non-socket edge coordinates to the lesser socket they're between).
 function pc__ec(pc, horizonal) {
   let vertical = !horizonal;
   if (pc[0] == 0) { // top row
@@ -258,25 +261,31 @@ function pc__ec(pc, horizonal) {
       return [ 3, 0 ];
     } else if (pc[1] == PATTERN_SIZE - 1 && vertical) { // right edge top
       return [ 1, 0 ];
-    } else { // top edge
+    } else if (horizontal) { // top edge
       return [ 0, Math.floor(pc[1]/2) ];
+    } else { // not on a vertical edge
+      return undefined;
     }
   } else if (pc[0] == PATTERN_SIZE - 1) {
     if (pc[1] == 0 && vertical) { // left edge bottom
       return [ 3, PATTERN_SIZE - 1 ];
     } else if (pc[1] == PATTERN_SIZE - 1 && vertical) { // right edge bottom
       return [ 1, PATTERN_SIZE - 1 ];
-    } else { // bottom edge
+    } else if (horizontal) { // bottom edge
       return [ 2, Math.floor(pc[1]/2) ];
+    } else { // not on a vertical edge
+      return undefined;
     }
-  } else { // must be on a vertical (left or right) edge; not on a corner
+  } else if (vertical) { // must be on a non-corner vertical (left or right)
     if (pc[1] == 0) {
       return [ 3, Math.floor(pc[0]/2) ];
     } else if (pc[1] == PATTERN_SIZE - 1) {
       return [ 1, Math.floor(pc[0]/2) ];
-    } else { // not on an edge
+    } else { // not on a vertical edge
       return undefined;
     }
+  } else { // horizontal and row is not first or last: not on an edge
+    return undefined;
   }
 }
 
@@ -343,11 +352,63 @@ function draw_labyrinth(ctx) {
   // TODO: HERE
 }
 
+// --------
+// RNG Code
+// --------
+
+function lfsr(x) {
+  // Implements a max-cycle-length 32-bit linear-feedback-shift-register.
+  // See: https://en.wikipedia.org/wiki/Linear-feedback_shift_register
+  // Note that this is NOT reversible!
+  var lsb = x & 1;
+  var r = x >>> 1;
+  if (lsb) {
+    r ^= 0x80200003; // 32, 22, 2, 1
+  }
+  return r;
+}
+
+function seed_for(fr_coords) {
+  // Determines the seed for the given fractal coordinate location.
+  let height = fr_coords[0];
+  let trail = fr_coords[1];
+  let seed = 1700191983;
+  for (let i = 0; i < height; ++i) {
+    seed = lfsr(seed);
+  }
+  for (let sidx of trail) {
+    seed = lfsr(seed + (seed+1)*sidx);
+  }
+
+  return seed;
+}
+
+// ------------------
+// Caching and Lookup
+// ------------------
+
+function lookup_bilayer(fr_coords) {
+  // Looks up bilayer information, returning undefined until info has been
+  // generated.
+  if (len(BILAYER_CACHE) < fr_coords + 1) {
+    // TODO: Trigger generation here!
+    return undefined;
+  }
+  let ancestor = BILAYER_CACHE[fr_coords];
+  // TODO: HERE
+}
+
 // --------------
 // Labyrinth Code
 // --------------
 
-j
+function determine_bilayer(fr_coords, superpattern) {
+  // Given fractal coordinates and a defining superpattern for a bilayer,
+  // creates and returns the pattern index grid for that bilayer.
+  let seed = seed_for(fr_coords);
+  superpattern.entrance...
+    // TODO: HERE
+}
 
 // ----------------------------
 // Pattern Loading & Management
@@ -412,12 +473,13 @@ function clockwise(rc) {
 }
 
 function reorganize_patterns(patterns) {
-  // Takes a raw patterns list and organizes it according to the input/output
+  // Takes a raw patterns list and organizes it according to the entrance/exit
   // cells of each pattern. The incoming pattern list should list all patterns
   // from left-side entrances to top, right, and bottom-side exits, without
   // containing any rotations (but with reflections across the horizontal).
   // Patterns are simply lists of indices covering 0 .. N^2-1, indicating the
   // order in which cells in a square are visited.
+  //
   // Entrances and exits are numbered:
   //
   //            0:0 - 0:1 - 0:2...0:N-1
@@ -432,16 +494,61 @@ function reorganize_patterns(patterns) {
   //
   //            2:0 - 2:1 - 2:2...2:N-1
   //
-  let by_entrance = {};
-  let by_exit = {};
+  // The return value is an object with the following keys:
+  //
+  //   patterns: The raw index lists, same as the input.
+  //   lookup: A table mapping entrance IDs to tables mapping exit IDs to lists
+  //           of pattern indices (indices in the patterns list).
+  //
+  let lookup = {};
 
-  for (let p of patterns) {
-    // TODO: HERE
+  for (let pidx in patterns) {
+    let p = patterns[pidx];
+
+    // Categorize by entrance:
+    let entrance = p[0];
+    let npc = idx__pc(entrance);
+    let nec = pc__ec(npc, false); // always hits the left edge
+    let nid = ec__eid(nec);
+    if (!lookup.hasOwnProperty(nid)) {
+      lookup[nid] = {};
+    }
+    by_en = lookup[eid];
+
+    // Within entrance object, categorize by exit:
+    let exit = p[p.length-1];
+    let xpc = idx__pc(exit);
+    let v_xec = pc__ec(xpc, false);
+    let hit = false;
+    if (v_xec != undefined && v_xec[0] != 3) { // exclude U-turns
+      let v_xid = ec__eid(v_xec);
+      if (!by_en.hasOwnProperty(v_xid)) {
+        by_en[v_xid] = [];
+      }
+      by_end[v_xid].push(pidx);
+      hit = true;
+    }
+    // might (also) be interpretable as an exit on a horizontal edge
+    // pushing this pattern twice is correct if both interpretations are
+    // possible (for exits on the upper-right and lower-right corners).
+    let h_xec = pc__ec(xpc, true);
+    if (h_xec != undefined) {
+      let h_xid = ec__eid(h_xec);
+      if (h_xid != v_xid) {
+        if (!by_end.hasOwnProperty(h_xid)) {
+          by_en[h_xid] = [];
+        }
+        by_en[h_xid].push(pidx);
+        hit = true;
+      }
+    }
+    if (!hit) {
+      console.warn("Pattern [" + pidx + "] remained uncategorized.");
+    }
   }
 
   return {
     "patterns": patterns,
-    "by_entrance": by_entrance,
-    "by_exit": by_exit,
+    "lookup": lookup,
   }
 }
