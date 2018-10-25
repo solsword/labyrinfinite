@@ -352,9 +352,9 @@ function draw_labyrinth(ctx) {
   // TODO: HERE
 }
 
-// --------
-// RNG Code
-// --------
+// ---------
+// Misc Code
+// ---------
 
 function lfsr(x) {
   // Implements a max-cycle-length 32-bit linear-feedback-shift-register.
@@ -368,7 +368,122 @@ function lfsr(x) {
   return r;
 }
 
-function seed_for(fr_coords) {
+function posmod(n, base) {
+  // Mod operator that always returns positive results.
+  return ((n % base) + base) % base;
+}
+
+// -------------------
+// Fractal Coordinates
+// -------------------
+
+
+// Fractal <-> absolute coordinates
+//
+// Absolute coordinates are an [x, y] pair that denotes a grid cell on a
+// standard right-handed grid where +x goes East and +y goes North. Note the
+// opposite ordering from pattern coordinate [row, col] pairs.
+//
+// For subspecific fractal coordinates, returns the absolute coordinates of the
+// center of the cell. Conversion takes time proportional to the log of the
+// absolute coordinate that's more distant from the origin.
+//
+// Fractal coordinates consist of a height value and a list of coordinates
+// indicating a trail downwards from that height. A height of 0 indicates the
+// unit is an n×n region, 1 an n^2×n^2 region, and so on. Each entry in a trail
+// is an index between 0 and n^2-1 that indicates which sub-cell of the current
+// cell the location is within. The trail may be shorter than the height, in
+// which case the fractal coordinates denote a bilayer above the base grid
+// cells.
+
+function fr__ac(fr) {
+  let height = fr[0];
+  let trail = fr[1];
+
+  let cw = Math.pow(5, height); // width of a single cell
+  let result = [0, 0]; // center coordinates at the top are always 0, 0.
+
+  // Trace down through each bilayer:
+  for (let i = 0; i < trail.length; ++i) {
+    let pc = idx__pc(trail[i]);
+    let row = pc[0];
+    let col = pc[1];
+    result[0] += (col - Math.floor(PATTERN_SIZE/2)) * cw;
+    result[1] += (row - Math.floor(PATTERN_SIZE/2)) * cw;
+    cw = cw/5;
+  }
+
+  return result;
+}
+
+function ac__fr(ac) {
+  let distance = Math.max(Math.abs(ac[0]), Math.abs(ac[1]));
+  // factor of two here because each n×n is centered at the origin, so only n/2
+  // of it extends away from the origin.
+  let height = Math.floor(Math.log(distance*2) / Math.log(PATTERN_SIZE));
+  let cw = Math.pow(5, height);
+
+  let trail = [];
+  let rc = ac; // relative coordinates
+
+  pc = [ // compute first local pattern coordinates
+    Math.floor(rc[1] / cw),
+    Math.floor(rc[0] / cw)
+  ];
+
+  // push first index onto trail
+  trail.push(pc__idx(pc));
+
+  for (let i = 0; i < height; ++i) { // doesn't iterate for height == 0
+    rc = [ // update our relative coordinates
+      posmod(rc[0], cw),
+      posmod(rc[1], cw)
+    ];
+
+    // Update cell width
+    cw /= 5;
+
+    pc = [ // compute next local pattern coordinates
+      Math.floor(rc[1] / cw),
+      Math.floor(rc[0] / cw)
+    ];
+
+    // push index onto trail
+    trail.push(pc__idx(pc));
+  }
+
+  return [height, trail];
+}
+
+function fr__edge_ac(fr, edge) {
+  // Works like fr__ac, but computes the coordinates of the middle of a
+  // specific edge of the given bilayer (or cell). The edge is specified using
+  // a number from 0 to 3, denoting North, East, South, and West in that order.
+  let ac = fr__ac(fr);
+
+  let height = fr[0];
+  let trail = fr[1];
+  let edge_height = height - trail.length
+
+  let pw = Math.pow(5, edge_height+1); // width of a pattern
+
+  let ev; // edge vector
+  if (edge == 0) { // North
+    ev = [0, 1]; 
+  } else if (edge == 1) { // East
+    ev = [1, 0];
+  } else if (edge == 2) { // South
+    ev = [0, -1];
+  } else { // West
+    ev = [-1, 0];
+  }
+  return [
+    ac[0] + ev[0] * pw/2,
+    ac[1] + ev[1] * pw/2
+  ];
+}
+
+function bilayer_seed(fr_coords) {
   // Determines the seed for the given fractal coordinate location.
   let height = fr_coords[0];
   let trail = fr_coords[1];
@@ -381,6 +496,22 @@ function seed_for(fr_coords) {
   }
 
   return seed;
+}
+
+function edge_seed(fr_coords, edge) {
+  // Determines the seed for the given edge of the fractally specified bilayer.
+  // Will return the same seed for both fractal + edge coordinates that
+  // reference each edge (e.g., for a 5×5 pattern size, edge 3 of [0, [10]] and
+  // edge 1 of [1, [11, 14]] are the same edge).
+  let ec = fr__edge_ac(fr_coords, edge);
+  let height = 1 + (fr_coords[0] - fr_coords[1].length);
+  let seed = 75928103;
+  let mix = ((seed + (17*ec[0])) ^ ec[1]) * (height + 3);
+  let churn = mix % 4;
+  for (let i = 0; i < churn; ++i) {
+    mix = lfsr(mix + height);
+  }
+  return mix;
 }
 
 // ------------------
@@ -405,7 +536,7 @@ function lookup_bilayer(fr_coords) {
 function determine_bilayer(fr_coords, superpattern) {
   // Given fractal coordinates and a defining superpattern for a bilayer,
   // creates and returns the pattern index grid for that bilayer.
-  let seed = seed_for(fr_coords);
+  let seed = bilayer_seed(fr_coords);
   superpattern.entrance...
     // TODO: HERE
 }
