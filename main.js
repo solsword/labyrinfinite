@@ -25,11 +25,17 @@ var PATTERN_SIZE = 5;
 // undefined.
 var BILAYER_CACHE = [];
 
-// Delay (ms) before generation starts
-var GEN_START_DELAY = 0;
+// Queue for bilayers waiting to be generated. Each entry should be a set of
+// fractal coordinates. Coordinates in the queue which cannot be generated
+// because the superstructure they belong to hasn't been created yet will be
+// removed and discarded.
+var GEN_QUEUE = [];
 
-// Delay (ms) between checking whether something can be generated
-var GEN_CHECK_DELAY = 8;
+// Number of bilayers to generate per gen step.
+var GEN_SPEED = 12;
+
+// Delay (ms) between generation ticks
+var GEN_DELAY = 5;
 
 // --------------------
 // Onload Functionality
@@ -530,43 +536,65 @@ function central_coords(height) {
   for (let h = 0; h < height; ++h) {
     trace.push(center);
   }
+  trace.push(center); // extra trace entry, 'cause height=0 means 1 trace entry
+  return [ height, trace ];
 }
 
 // ------------------
 // Caching and Lookup
 // ------------------
 
-function request_central_bilayer(height) {
+function request_central_bilayer() {
+  if (BILAYER_CACHE[BILAYER_CACHE.length - 1] == null) {
+    // We're already working on the next central bilayer
+    return;
+  }
+  let height = BILAYER_CACHE.length;
+  BILAYER_CACHE[height] = null;
   let fr_coords = central_coords(height);
-  for (h = 0; h < height; ++h) {
-    if (BILAYER_CACHE[h] == undefined) {
-      BILAYER_CACHE[h] = null;
-      window.setTimeout(
-        eventually_generate_bilayer,
-        GEN_START_DELAY,
-        [ height, 
-      )
-    }
-  }
-    j
-  if (height > 0 && BILAYER_CACHE[height-1] == undefined) {
-    request_central_bilayer(height-1);
-    BILAYER_CACHE[height-1]
-  }
+  GEN_QUEUE.push(fr_coords);
 }
 
 function lookup_bilayer(fr_coords) {
-  // Looks up bilayer information, returning undefined until info has been
-  // generated.
   let height = fr_coords[0];
   let trace = fr_coords[1];
-  if (len(BILAYER_CACHE) < fr_coords + 1) {
-    request_central_bilayer(len(trace) - 1);
-    // TODO: Trigger generation here!
-    return undefined;
+  if (BILAYER_CACHE.length < height + 1) {
+    request_central_bilayer();
+    return;
   }
-  let ancestor = BILAYER_CACHE[fr_coords];
-  // TODO: HERE
+  let ancestor = BILAYER_CACHE[height];
+  let sofar = [];
+  for (let idx of trace) {
+    sofar.push(idx);
+    if (ancestor.children[idx] == null) {
+      // we're already working on it
+      return;
+    } else if (ancestor.children[idx] == undefined) {
+      // add this to our generation queue
+      ancestor.children[idx] = null;
+      GEN_QUEUE.push([ height, sofar ]);
+    } else {
+      // inwards; onwards
+      ancestor = ancestor.children[idx];
+    }
+  }
+  // we've found it!
+  return ancestor;
+}
+
+function gen_step() {
+  for (let i = 0; i < GEN_SPEED; ++i) {
+    gen_next();
+  }
+  window.setTimeout(gen_step, GEN_DELAY);
+}
+
+
+function gen_next() {
+  let next = GEN_QUEUE.shift();
+  let height = next[0];
+  let trace = next[1];
+  if // TODO: HERE
 }
 
 // --------------
