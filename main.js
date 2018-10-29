@@ -529,15 +529,10 @@ function edge_seed(fr_coords, edge) {
 }
 
 function central_coords(height) {
-  // Returns the fractal coordinates for the central bilayer at the given
-  // height.
-  let trace = [];
+  // Returns the fractal coordinates for the central bilayer just below the
+  // given height (or just the central grid cell for height=0).
   let center = Math.floor((PATTERN_SIZE * PATTERN_SIZE) / 2);
-  for (let h = 0; h < height; ++h) {
-    trace.push(center);
-  }
-  trace.push(center); // extra trace entry, 'cause height=0 means 1 trace entry
-  return [ height, trace ];
+  return [ height, [ center ] ];
 }
 
 // ------------------
@@ -556,11 +551,14 @@ function request_central_bilayer() {
 }
 
 function lookup_bilayer(fr_coords) {
+  // Looks up the cached bilayer at the given fractal coordinates, or returns
+  // undefined and adds an entry to the generation queue if that bilayer or one
+  // of its parents is not yet cached.
   let height = fr_coords[0];
   let trace = fr_coords[1];
   if (BILAYER_CACHE.length < height + 1) {
     request_central_bilayer();
-    return;
+    return undefined;
   }
   let ancestor = BILAYER_CACHE[height];
   let sofar = [];
@@ -568,11 +566,12 @@ function lookup_bilayer(fr_coords) {
     sofar.push(idx);
     if (ancestor.children[idx] == null) {
       // we're already working on it
-      return;
+      return undefined;
     } else if (ancestor.children[idx] == undefined) {
       // add this to our generation queue
       ancestor.children[idx] = null;
       GEN_QUEUE.push([ height, sofar ]);
+      return undefined;
     } else {
       // inwards; onwards
       ancestor = ancestor.children[idx];
@@ -583,6 +582,7 @@ function lookup_bilayer(fr_coords) {
 }
 
 function gen_step() {
+  // Self-queuing function that processes the generation queue.
   for (let i = 0; i < GEN_SPEED; ++i) {
     gen_next();
   }
@@ -591,22 +591,131 @@ function gen_step() {
 
 
 function gen_next() {
+  // Generates the next bilayer in the generation queue, first generating a
+  // single extra level of the bilayer cache if at least one more has been
+  // requested.
+  if (BILAYER_CACHE[BILAYER_CACHE.length - 1] == null) {
+    let above;
+    if (BILAYER_CACHE.length > 1) {
+      above = gen_central_bilayer(
+        BILAYER_CACHE.length - 1,
+        BILAYER_CACHE[BILAYER_CACHE.length - 2]
+      ); // must embed this @ center
+    } else {
+      above = gen_central_bilayer(BILAYER_CACHE.length - 1, null);
+      // no constraint
+    }
+    BILAYER_CACHE[BILAYER_CACHE.length - 1] = above;
+  }
   let next = GEN_QUEUE.shift();
   let height = next[0];
   let trace = next[1];
-  if // TODO: HERE
+  // Pop last entry in trace (points to bilayer we're being asked to generate)
+  // and keep the rest to find our parent:
+  let last = trace.pop();
+  let parent = lookup_bilayer([height, trace]);
+  if (parent != null && parent != undefined && parent.children[last] == null) {
+    parent.children[last] = gen_bilayer([height, trace], parent, last);
+  }
 }
+
 
 // --------------
 // Labyrinth Code
 // --------------
 
-function determine_bilayer(fr_coords, superpattern) {
-  // Given fractal coordinates and a defining superpattern for a bilayer,
-  // creates and returns the pattern index grid for that bilayer.
-  let seed = bilayer_seed(fr_coords);
-  superpattern.entrance...
-    // TODO: HERE
+function gen_central_bilayer(height, child_bilayer) {
+  // Using the given height and child bilayer, generates and returns the
+  // central bilayer, at the given height.
+
+  // Compute the seed
+  let fc = central_coords(height);
+  let seed = bilayer_seed(fc);
+
+  // Assemble empty result:
+  result = {
+   "coords": fc,
+   "seed": seed,
+   "pattern": undefined,
+   "sub_patterns": [],
+   "children": []
+  };
+
+  // Extract & embed child pattern
+  let center = Math.floor((PATTERN_SIZE * PATTERN_SIZE) / 2);
+  let constraint = child_bilayer.pattern;
+  result.sub_patterns[center] = constraint;
+
+  // Pick a pattern that will accommodate the constraint:
+
+  // Add universal connectors to either side of the constrained piece
+
+  // Set edge patterns:
+  set_edge_patterns(result);
+
+  // Fill remaining patterns:
+  fill_patterns(result);
+
+  return result;
+}
+
+function gen_bilayer(parent_fc, parent_bilayer, index) {
+ // Generates a non-central bilayer given the fractal coordinates of its
+ // parent, its parent bilayer, and its index within that parent.
+
+ // Re-assemble full trace:
+ let height = parent_fc[0];
+ let ptrace = parent_fc[1];
+ let trace = ptrace.slice();
+ trace.push(index);
+ let fc = [height, trace];
+
+ // Compute the seed
+ let seed = bilayer_seed(fc);
+ 
+ // Create empty result
+ result = {
+   "coords": fc,
+   "seed": seed,
+   "pattern": parent_bilayer.sub_patterns[index],
+   "sub_patterns": [],
+   "children": []
+ };
+
+  // Set edge patterns:
+  set_edge_patterns(result);
+
+  // Fill remaining patterns:
+  fill_patterns(result);
+
+  return result;
+}
+
+function set_edge_patterns(bilayer) {
+  // Given a bilayer, picks edge entrance/exit indices and sets edge and edge+1
+  // patterns accordingly.
+
+}
+
+function fill_patterns(bilayer) {
+  // Given a bilayer that already knows its superpattern, iteratively fills in
+  // any unconstrained sub-patterns that remain. Entrances and exits must be
+  // filled in first!
+  let superpattern = PATTERNS.list[bilayer.pattern];
+  // Doesn't touch entrance or exit
+  for (let i = 1; i < superpattern.length-1; ++i) {
+    let prev = superpattern[i-1];
+    let idx = superpattern[i];
+    let next superpattern[i+1];
+    if (bilayer.sub_patterns[idx] == undefined) {
+      // need to decide on a pattern here
+
+      // TODO: compute entrance dir + index
+      // TODO: compute exit dir + index
+      // TODO: roll missing info
+      // TODO: pick pattern
+    }
+  }
 }
 
 // ----------------------------
@@ -747,7 +856,7 @@ function reorganize_patterns(patterns) {
   }
 
   return {
-    "patterns": patterns,
+    "list": patterns,
     "lookup": lookup,
   }
 }
