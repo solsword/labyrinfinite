@@ -17,6 +17,9 @@ var MIN_SCALE = 24;
 // Speed at which to change scales (percentage of scale difference per second)
 var ZOOM_SPEED = 0.6
 
+// The color of the grid
+var GRID_COLOR = "white";
+
 // Size of each pattern
 var PATTERN_SIZE = 5;
 
@@ -46,71 +49,11 @@ var EAST = 1;
 var SOUTH = 2;
 var WEST = 3;
 
-// --------------------
-// Onload Functionality
-// --------------------
+// Which frame we're on:
+var FRAME = 0;
 
-// Run when the document is loaded:
-window.onload = function () {
-  // Start pattern-loading process immediately
-  PATTERNS = reorganize_patterns(load_patterns())
-
-  // Grab canvas & context:
-  let canvas = document.getElementById("labyrinth");
-  CTX = canvas.getContext("2d");
-
-  // Set initial canvas size & scale:
-  update_canvas_size(canvas, CTX);
-  set_scale(CTX, 1);
-  set_destination(CTX, [0, 0]);
-
-  // Set up trails:
-  CTX.trails = [
-    { "seed": 19283801, "positions": [] },
-    { "seed": 74982018, "positions": [] },
-    { "seed": 57319834, "positions": [] },
-  ];
-  for (let tr of CTX.trails) {
-    for (let i = 0; i < TRAIL_LENGTH; ++i) {
-      tr.positions.push([0, 0]);
-    }
-  }
-
-  // Listen for window resizes but wait until 20 ms after the last consecutive
-  // one to do anything.
-  var timer_id = undefined;
-  window.addEventListener("resize", function() {
-    if (timer_id != undefined) {
-      clearTimeout(timer_id);
-      timer_id = undefined;
-    }
-    timer_id = setTimeout(
-      function () {
-        timer_id = undefined;
-        update_canvas_size(canvas, CTX);
-      },
-      20 // milliseconds
-    );
-  });
-
-  // Scrolling updates scale:
-  document.onwheel = function(ev) {
-    if (ev.preventDefault) { ev.preventDefault(); }
-    handle_scroll(CTX, ev);
-  }
-
-  // Clicking sets destination:
-  document.onmouseup = function (ev) {
-    if (ev.preventDefault) { ev.preventDefault(); }
-    handle_tap(CTX, ev);
-  }
-  document.ontouchend = document.onmouseup;
-  // TODO: Really this?
-  document.ontouchcancel = document.onmouseup;
-
-  // Draw every frame
-  window.requestAnimationFrame(draw_frame);
-};
+// When the frame counter resets:
+var MAX_FC = 10000000;
 
 // -------------------------
 // Updaters & Event Handlers
@@ -153,7 +96,7 @@ function handle_scroll(ctx, ev) {
     dy *= PIXELS_PER_LINE * LINES_PER_PAGE;
   }
 
-  set_scale(ctx, ctx.scale * Math.min(0.1, (100 + dy) / 100));
+  set_scale(ctx, ctx.scale * Math.max(0.1, (100 + dy) / 100));
 }
 
 function event_pos(ctx, ev) {
@@ -161,12 +104,12 @@ function event_pos(ctx, ev) {
   if (ev.touches) {
     ev = ev.touches[0];
   }
-  return pc__vc(ctx, [ev.clientX, ev.clientY]);
+  return pgc__vc(ctx, [ev.clientX, ev.clientY]);
 }
 
 function handle_tap(ctx, ev) {
   let vc = event_pos(ctx, ev);
-  let gc = wc__gc(ctx, cc__wc(ctx, vc__cc(ctx, vc)));
+  let gc = wc__gc(cc__wc(ctx, vc__cc(ctx, vc)));
   set_destination(ctx, gc);
 }
 
@@ -175,14 +118,14 @@ function handle_tap(ctx, ev) {
 // --------------------
 
 // Page <-> viewport coordinates
-function pc__vc(ctx, pc) {
+function pgc__vc(ctx, pc) {
   return [
     (pc[0] - ctx.bounds.left) / ctx.bounds.width,
     (pc[1] - ctx.bounds.top) / ctx.bounds.height
   ];
 }
 
-function vc__pc(ctx, vc) {
+function vc__pgc(ctx, vc) {
   return [
     ctx.bounds.left + ctx.bounds.width * vc[0],
     ctx.bounds.top + ctx.bounds.height * vc[1],
@@ -220,18 +163,42 @@ function wc__cc(ctx, wc) {
 }
 
 // World <-> grid coordinates
-function wc__gc(ctx, wc) {
+function wc__gc(wc) {
   return [
     Math.floor(wc[0]),
     Math.floor(wc[1])
   ];
 }
 
-function gc__wc(ctx, gc) {
+function gc__wc(gc) {
   return [
     gc[0] + 0.5,
     gc[1] + 0.5
   ];
+}
+
+// Page coordinates all the way to grid coordinates:
+function pgc__gc(ctx, pgc) {
+  return wc__gc(
+    cc__wc(
+      ctx,
+      vc__cc(
+        ctx,
+        pgc__vc(ctx, pgc)
+      )
+    )
+  );
+}
+
+// Gets extrema of canvas in the grid. Returns an object with keys 'NW', 'NE',
+// 'SW', and 'SE' for each of the four corners.
+function grid_extrema(ctx) {
+  return {
+    'NW': pgc__gc(ctx, [ ctx.bounds.left, ctx.bounds.top ]),
+    'NE': pgc__gc(ctx, [ ctx.bounds.right, ctx.bounds.top ]),
+    'SW': pgc__gc(ctx, [ ctx.bounds.left, ctx.bounds.bottom ]),
+    'SE': pgc__gc(ctx, [ ctx.bounds.right, ctx.bounds.bottom ]),
+  };
 }
 
 // Pattern coordinates <-> indices
@@ -270,10 +237,10 @@ function eid__ec(eid) {
 // (Possibly-)Nonspecific edge coordinate to (possible-singular) list of EIDs.
 function ec__eids(ec) {
   let result = [];
-  if (ec[1] == undefined) {
+  if (ec[1] != undefined) {
     result.push(ec__eid(ec));
   } else {
-    for (let i = 0; i < PATTERN_SIZE; i += 2) {
+    for (let i = 0; i < Math.floor(PATTERN_SIZE/2); ++i) {
       result.push(ec__eid([ec[0], i]));
     }
   }
@@ -300,12 +267,12 @@ function ec__pc(ec) {
   }
 }
 
-// horizonal is a hint as to whether corner coordinates are on horizontal
+// horizontal is a hint as to whether corner coordinates are on horizontal
 // (top/bottom) or vertical (left/right) edges. Returns undefined if the
 // pattern coordinate isn't on an edge of the specified type (but rounds
 // non-socket edge coordinates to the lesser socket they're between).
-function pc__ec(pc, horizonal) {
-  let vertical = !horizonal;
+function pc__ec(pc, horizontal) {
+  let vertical = !horizontal;
   if (pc[0] == 0) { // top row
     if (pc[1] == 0 && vertical) { // left edge top
       return [ WEST, 0 ];
@@ -318,9 +285,9 @@ function pc__ec(pc, horizonal) {
     }
   } else if (pc[0] == PATTERN_SIZE - 1) {
     if (pc[1] == 0 && vertical) { // left edge bottom
-      return [ WEST, PATTERN_SIZE - 1 ];
+      return [ WEST, Math.floor((PATTERN_SIZE - 1)/2) ];
     } else if (pc[1] == PATTERN_SIZE - 1 && vertical) { // right edge bottom
-      return [ EAST, PATTERN_SIZE - 1 ];
+      return [ EAST, Math.floor((PATTERN_SIZE - 1)/2) ];
     } else if (horizontal) { // bottom edge
       return [ SOUTH, Math.floor(pc[1]/2) ];
     } else { // not on a vertical edge
@@ -336,6 +303,35 @@ function pc__ec(pc, horizonal) {
     }
   } else { // horizontal and row is not first or last: not on an edge
     return undefined;
+  }
+}
+
+function nbs__ori(pr, pc) {
+  // Takes previous pattern coordinates and current pattern coordinates of two
+  // neighboring cells, and returns the orientation of the current cell (which
+  // edge of the current cell borders that neighbor).
+  if (pr[0] == pc[0] - 1) {
+    return NORTH;
+  } else if (pr[0] == pc[0] + 1) {
+    return SOUTH;
+  } else if (pr[1] == pc[1] + 1) {
+    return EAST;
+  } else {
+    return WEST;
+  }
+}
+
+function ori__nb(pc, ori) {
+  // Takes a pair of (row, col) pattern coordinates and an orientation and
+  // returns the pattern coordinates of the cell in the indicated direction.
+  if (ori == NORTH) {
+    return [ pc[0] - 1, pc[1] ];
+  } else if (ori == EAST) {
+    return [ pc[0], pc[1] + 1 ];
+  } else if (ori == SOUTH) {
+    return [ pc[0] + 1, pc[1] ];
+  } else if (ori == WEST) {
+    return [ pc[0], pc[1] - 1 ];
   }
 }
 
@@ -356,6 +352,10 @@ function draw_frame(now) {
   CTX.elapsed = ms_time - CTX.now;
   CTX.now = ms_time;
 
+  // Count frames
+  FRAME += 1;
+  FRAME %= MAX_FC;
+
   // TODO: let user lock-out autoadjust
   adjust_scale(CTX);
   draw_labyrinth(CTX);
@@ -369,7 +369,7 @@ function interest_bb(ctx) {
     "bottom": ctx.destination[1]
   }
   for (let trail of ctx.trails) {
-    for (let pos of trace.positions) {
+    for (let pos of trail.positions) {
       if (pos[0] < result.left) { result.left = pos[0]; }
       if (pos[0] > result.right) { result.right = pos[0]; }
       if (pos[1] < result.top) { result.top = pos[1]; }
@@ -399,7 +399,70 @@ function adjust_scale(ctx) {
 
 function draw_labyrinth(ctx) {
   // Draws the visible portion of the labyrinth
-  // TODO: HERE
+
+  // Clear the canvas:
+  // TODO: Draw a background rectangle to get color here?
+  ctx.clearRect(0, 0, ctx.cwidth, ctx.cheight);
+
+  // Set stroke color:
+  ctx.strokeStyle = GRID_COLOR;
+
+  // Radius of each grid cell
+  // TODO: Why is this 500!?!
+  let r = 400 / ctx.scale;
+
+  // Iterate over visible (and a few invisible) cells at the base layer:
+  let extrema = grid_extrema(ctx);
+  for (let x = extrema['NW'][0] - 1; x <= extrema['NE'][0] + 1; ++x) {
+    for (let y = extrema['NW'][0] - 1; y <= extrema['NE'][0] + 1; ++y) {
+      // Canvas coordinates for this grid cell:
+      let cc = wc__cc(ctx, gc__wc([ x, y ]));
+
+      // Draw a from-link for each cell
+      let fc = ac__fr([x, y]);
+      if (FRAME % 1000 == 0) {
+        console.log([[x, y], fc]);
+      }
+      let height = fc[0];
+      let trace = fc[1];
+      let bilayer = lookup_bilayer([height, trace.slice(0, trace.length - 1)]);
+
+      // Our trace and pattern index:
+      let pidx = trace[trace.length - 1];
+
+      if (bilayer == undefined) { // not available yet; has been requested
+
+        // Just draw a circle
+        ctx.beginPath();
+        ctx.arc(cc[0], cc[1], r, 0, 2*Math.PI);
+        ctx.stroke();
+
+      } else {
+
+        // Draw a from-link
+
+        // Look up cell orientation:
+        let pattern = bilayer.pattern;
+        let ori = PATTERNS.orientations[bilayer.pattern][pidx];
+        if (FRAME % 1000 == 0) {
+          console.log([bilayer.pattern, pidx, ori]);
+        }
+
+        // Neighbor in that direction & canvas coords for that neighbor:
+        let yx_nb = ori__nb([y, x], ori);
+        let st_cc = wc__cc(ctx, gc__wc([ yx_nb[1], yx_nb[0] ]));
+
+        // Draw a simple line:
+        ctx.moveTo(st_cc[0], st_cc[1]);
+        ctx.beginPath();
+        ctx.lineTo(cc[0], cc[1]);
+        ctx.stroke();
+      }
+    }
+  }
+
+  // Done.
+  // TODO: Draw trails!
 }
 
 // ---------
@@ -418,11 +481,36 @@ function lfsr(x) {
   return r;
 }
 
+function randint(up_to, seed) {
+  // Picks a random integer strictly less than the given value using the given
+  // seed.
+  // TODO: Does this need work?
+  return posmod(seed, up_to);
+}
+
 function choose_randomly(possibilities, seed) {
   // Picks randomly from a list using the given seed.
   // TODO: Does this need work?
   let idx = posmod(seed, possibilities.length);
   return possibilities[idx];
+}
+
+function random_socket(seed) {
+  // Picks a random edge socket using the given seed.
+  // TODO: Does this need improvement?
+  return posmod(seed, Math.floor(PATTERN_SIZE/2));
+}
+
+function random_universal_socket(seed) {
+  // Picks a random socket that's a universal connector, meaning it doesn't put
+  // any constraints on the other entrance/exit socket of a cell it's added to.
+  // TODO: Does this need improvement?
+  let range = Math.floor(PATTERN_SIZE/2) - 2;
+  if (range > 0) {
+    return 1 + posmod(seed, range);
+  } else {
+    return 1;
+  }
 }
 
 function posmod(n, base) {
@@ -434,6 +522,12 @@ function rotations_between(st, ed) {
   // Takes starting and ending orientations and returns the number of clockwise
   // rotations from the start to the end.
   return ((ed - st) + 4) % 4;
+}
+
+function absolute_orientation(oriA, oriB) {
+  // Returns the absolute orientation when something with orientation B is
+  // embedded in something with orientation A.
+  return (oriA + oriB) % 4;
 }
 
 function opposite_side(ori) {
@@ -505,7 +599,10 @@ function ac__fr(ac) {
   let cw = Math.pow(5, height);
 
   let trace = [];
-  let rc = ac; // relative coordinates
+  let rc = [
+    ac[0] + cw * PATTERN_SIZE/2,
+    ac[1] + cw * PATTERN_SIZE/2
+  ]; // relative coordinates
 
   pc = [ // compute first local pattern coordinates
     Math.floor(rc[1] / cw),
@@ -623,11 +720,15 @@ function lookup_bilayer(fr_coords) {
   // of its parents is not yet cached.
   let height = fr_coords[0];
   let trace = fr_coords[1];
+
   if (BILAYER_CACHE.length < height + 1) {
     request_central_bilayer();
     return undefined;
   }
   let ancestor = BILAYER_CACHE[height];
+  if (ancestor == null) {
+    return undefined;
+  }
   let sofar = [];
   for (let idx of trace) {
     sofar.push(idx);
@@ -650,8 +751,11 @@ function lookup_bilayer(fr_coords) {
 
 function gen_step() {
   // Self-queuing function that processes the generation queue.
-  for (let i = 0; i < GEN_SPEED; ++i) {
-    gen_next();
+  if (PATTERNS != undefined) {
+    // skip if we haven't loaded patterns yet
+    for (let i = 0; i < GEN_SPEED; ++i) {
+      gen_next();
+    }
   }
   window.setTimeout(gen_step, GEN_DELAY);
 }
@@ -675,13 +779,21 @@ function gen_next() {
     BILAYER_CACHE[BILAYER_CACHE.length - 1] = above;
   }
   let next = GEN_QUEUE.shift();
+  if (next == undefined) {
+    return; // nothing to do right now
+  }
   let height = next[0];
   let trace = next[1];
   // Pop last entry in trace (points to bilayer we're being asked to generate)
   // and keep the rest to find our parent:
   let last = trace.pop();
   let parent = lookup_bilayer([height, trace]);
-  if (parent != null && parent != undefined && parent.children[last] == null) {
+  if (
+    parent != null
+ && parent != undefined
+ && parent.children != null
+ && parent.children[last] == null
+  ) {
     parent.children[last] = gen_bilayer([height, trace], parent, last);
   }
 }
@@ -708,27 +820,53 @@ function gen_central_bilayer(height, child_bilayer) {
    "children": []
   };
 
-  // Extract & embed child pattern
-  let center = Math.floor((PATTERN_SIZE * PATTERN_SIZE) / 2);
-  let constraint = child_bilayer.pattern;
-  result.sub_patterns[center] = constraint;
+  // Extract & embed child pattern, and pick a compatible superpattern
+  if (child_bilayer != null) {
+    // Figure out how our center cell must be oriented given our child bilayer:
+    let constraint = child_bilayer.pattern;
+    let c_nec = PATTERNS.entrances[constraint];
+    let c_nori = c_nec[0];
+    let c_xec = PATTERNS.exits[constraint];
+    let c_xori = c_xec[0];
 
-  // Pick a pattern that will accommodate the constraint:
+    // Compute possibilities and pick a pattern:
+    let poss = central_possibilities(c_nori, c_xori);
+    console.log([c_nori, c_xori]);
+    console.log("Poss: ");
+    console.log(poss);
+    // TODO: How can poss turn up empty?!?
+    result.pattern = choose_randomly(poss, lfsr(seed + 61987291));
 
-  // Add universal connectors to either side of the constrained piece
+    // Embed our child pattern:
+    let center = Math.floor((PATTERN_SIZE * PATTERN_SIZE) / 2);
+    result.sub_patterns[center] = constraint;
 
-  // Set edge patterns:
-  set_edge_patterns(result);
+    // Isolate that central pattern:
+    isolate_center_pattern(result);
+  } else { // No child, so we're at the base layer
+    result.sub_patterns = null; // there are no sub-patterns
+    result.children = null; // there are no children
 
-  // Fill remaining patterns:
-  fill_patterns(result);
+    // Pattern chosen completely at random:
+    result.pattern = randint(PATTERNS.positions.length, lfsr(seed + 31893123));
+  }
+
+  // Only set sub-patterns if we're above the bottom layer:
+  if (result.sub_patterns != null) {
+
+    // Set edge patterns:
+    set_edge_patterns(result);
+
+    // Fill remaining patterns:
+    fill_patterns(result);
+  }
 
   return result;
 }
 
 function gen_bilayer(parent_fc, parent_bilayer, index) {
  // Generates a non-central bilayer given the fractal coordinates of its
- // parent, its parent bilayer, and its index within that parent.
+ // parent, its parent bilayer, and its pattern index within that parent.
 
  // Re-assemble full trace:
  let height = parent_fc[0];
@@ -739,12 +877,16 @@ function gen_bilayer(parent_fc, parent_bilayer, index) {
 
  // Compute the seed
  let seed = bilayer_seed(fc);
+
+ // Look up the pattern index in our parent:
+ let pattern = parent_bilayer.sub_patterns[index];
+ console.log("NRM: " + pattern);
  
- // Create empty result
+ // Create result
  result = {
    "coords": fc,
    "seed": seed,
-   "pattern": parent_bilayer.sub_patterns[index],
+   "pattern": pattern,
    "sub_patterns": [],
    "children": []
  };
@@ -758,11 +900,116 @@ function gen_bilayer(parent_fc, parent_bilayer, index) {
   return result;
 }
 
-function set_edge_patterns(bilayer) {
-  // Given a bilayer, picks edge entrance/exit indices and sets edge and edge+1
-  // patterns accordingly.
+function isolate_center_pattern(bilayer) {
+  // Given a bilayer with a fixed central pattern, adds sub-patterns on either
+  // side of the central pattern that isolate it from the rest of the
+  // sub-patterns in the bilayer.
+  if (bilayer.pattern == undefined) {
+    console.error("Undefined bilayer pattern in isolate_center_pattern.");
+  }
+  let seed = lfsr(bilayer.seed + 57239842);
+  let center = Math.floor((PATTERN_SIZE * PATTERN_SIZE) / 2);
+  let cidx = PATTERNS.indices[bilayer.pattern][center];
+  let next = cidx + 1;
+  let prev = cidx - 1;
+  let positions = PATTERNS.positions[bilayer.pattern];
+  let nx_idx = positions[next];
+  let pr_idx = positions[prev];
 
-  // TODO: HERE
+  // The constraining sub-pattern:
+  let constraint = bilayer.sub_patterns[center];
+
+  // That pattern's entrance and exit:
+  let nec = PATTERNS.entrances[constraint];
+  let xec = PATTERNS.exits[constraint];
+
+  // The partner edge coordinates for those:
+  let pr_xec = [ opposite_side(nec[0]), nec[1] ];
+  let nx_nec = [ opposite_side(xec[0]), xec[1] ];
+
+  // Orientations for entrance to previous and exit from next:
+  let pr_nori = PATTERNS.orientations[bilayer.pattern][prev];
+  let nx_xori = PATTERNS.orientations[bilayer.pattern][next];
+
+  // Pick valve sockets
+  let pr_valve = random_universal_socket(seed);
+  seed = lfsr(seed);
+  let nx_valve = random_universal_socket(seed);
+  seed = lfsr(seed);
+
+  let poss = pattern_possibilities([pr_nori, pr_valve], pr_xec);
+  bilayer.sub_patterns[pr_idx] = choose_randomly(poss, seed);
+  seed = lfsr(seed);
+
+  poss = pattern_possibilities(nx_nec, [nx_xori, nx_valve]);
+  bilayer.sub_patterns[nx_idx] = choose_randomly(poss, seed);
+}
+
+function set_edge_patterns(bilayer) {
+  // Given a bilayer that already has a superpattern, picks edge entrance/exit
+  // sub-sockets and sets edge sub-patterns accordingly.
+
+  let seed = lfsr(bilayer.seed + 1029801823);
+  let coords = bilayer.coords;
+
+  let superpattern = PATTERNS.positions[bilayer.pattern];
+  let last = superpattern.length - 1;
+  let nec = PATTERNS.entrances[bilayer.pattern];
+  let xec = PATTERNS.exits[bilayer.pattern];
+
+  // Pick edge sockets based on edge seeds (our partners' picks will match):
+  let n_socket = random_socket(edge_seed(coords, nec[0]));
+  let x_socket = random_socket(edge_seed(coords, xec[0]));
+
+  // The start and end sub-patterns that we will determine, and the
+  // orientations of their non-edge-facing sides:
+  let st = superpattern[0];
+  let st_xori = opposite_side(PATTERNS.orientations[bilayer.pattern][1]);
+  let ed = superpattern[last];
+  let ed_nori = PATTERNS.orientations[bilayer.pattern][last];
+
+  console.log([xec[0], ed_nori]);
+
+  // Observe or pick start valve socket:
+  let st_next = superpattern[1];
+  let st_valve = undefined;
+  if (bilayer.sub_patterns == null) {
+    st_valve = random_universal_socket(seed);
+    seed = lfsr(seed);
+  } else {
+    let sub_next = bilayer.sub_patterns[st_next];
+    if (sub_next != undefined && sub_next != null) {
+      st_valve = PATTERNS.entrances[sub_next][1];
+    } else {
+      st_valve = random_universal_socket(seed);
+      seed = lfsr(seed);
+    }
+  }
+
+  // Observe or pick end valve socket:
+  let ed_prev = superpattern[last - 1];
+  let ed_valve = undefined;
+  if (bilayer.sub_patterns == null) {
+    ed_valve = random_universal_socket(seed);
+    seed = lfsr(seed);
+  } else {
+    let sub_prev = bilayer.sub_patterns[ed_prev];
+    if (sub_prev != undefined && sub_prev != null) {
+      ed_valve = PATTERNS.exits[sub_prev][1];
+    } else {
+      ed_valve = random_universal_socket(seed);
+      seed = lfsr(seed);
+    }
+  }
+
+  // Pick a start sub-pattern given the constraints we've chosen:
+  let poss = pattern_possibilities([nec[0], n_socket], [st_xori, st_valve]);
+  bilayer.sub_patterns[st] = choose_randomly(poss, seed);
+  seed = lfsr(seed);
+
+  // Pick an end sub-pattern given the constraints we've chosen:
+  poss = pattern_possibilities([ed_nori, ed_valve], [xec[0], x_socket]);
+  bilayer.sub_patterns[ed] = choose_randomly(poss, seed);
 }
 
 function fill_patterns(bilayer) {
@@ -770,7 +1017,7 @@ function fill_patterns(bilayer) {
   // any unconstrained sub-patterns that remain. Entrances and exits must be
   // filled in first!
   let superpattern = PATTERNS.positions[bilayer.pattern];
-  let seed = bilayer.seed;
+  let seed = lfsr(bilayer.seed + 5786297813);
   // Doesn't touch entrance or exit
   for (let i = 1; i < superpattern.length-1; ++i) {
     let idx = superpattern[i];
@@ -778,63 +1025,25 @@ function fill_patterns(bilayer) {
     if (bilayer.sub_patterns[idx] == undefined) {
       // get prev + next indices
       let prev = superpattern[i-1];
-      let next superpattern[i+1];
+      let next = superpattern[i+1];
 
       // compute entrance/exit orientations
-      let nori, xori;
       let prpc = idx__pc(prev);
-      if (prpc[0] == pc[0] - 1) {
-        nori = 3;
-      } else if (prpc[0] == pc[0] + 1) {
-        nori = 1;
-      } else if (prpc[1] == pc[1] + 1) {
-        nori = 2;
-      } else {
-        nori = 0;
-      }
+      let nori = nbs__ori(prpc, pc);
       let nxpc = idx__pc(next);
-      if (nxpc[0] == pc[0] - 1) {
-        xori = 3;
-      } else if (nxpc[0] == pc[0] + 1) {
-        xori = 1;
-      } else if (nxpc[1] == pc[1] + 1) {
-        xori = 2;
-      } else {
-        xori = 0;
-      }
+      let xori = opposite_side(nbs__ori(pc, nxpc));
 
       // pick entrance/exit sockets
       let pxs = undefined; // previous exit socket
       let ppat = bilayer.sub_patterns[prev];
       if (ppat != undefined && ppat != null) {
-        let px = PATTERNS.exits[ppat]; // previous pattern exit info
-        pxo = px[0]; // just the orientation
-        pxs = px[1]; // just the socket
-
-        // figure out rotation of previous pattern and flip socket if necessary:
-        let prot = rotations_between(pxo, opposite_side(nori));
-        if (
-          (pxo % 2 == 0 && prot > 1)
-       || (pxo % 2 == 1 && (prot == 1 || prot == 2))
-        ) {
-          pxs = flip_socket(pxs);
-        }
+        let pxs = PATTERNS.exits[ppat][1]; // just the socket
       }
 
       let nns = undefined; // next entrance socket
       let npat = bilayer.sub_patterns[next];
       if (npat != undefined && npat != null) {
-        nns = PATTERNS.entrances[npat]; // (entrances don't store orientations)
-
-        // figure out rotation of previous pattern and flip socket if necessary:
-        let nrot = rotations_between(
-          PATTERN_ENTRANCE_ORIENTATION,
-          opposite_side(xori)
-        );
-        // (we know entrance starting orientation is West)
-        if (nrot == 1 || nrot == 2) {
-          nns = flip_socket(nns);
-        }
+        nns = PATTERNS.entrances[npat][1]; // just the socket
       }
 
       // Patterns that fit:
@@ -872,9 +1081,10 @@ function load_patterns() {
       return undefined;
     }
     try {
-      return JSON.parse(xobj.responseText);
+      receive_patterns(JSON.parse(xobj.responseText));
     } catch (e) {
       console.error("JS error while loading patterns from:\n" + dpath)
+      console.log(e);
       return undefined;
     }
   };
@@ -890,9 +1100,17 @@ function load_patterns() {
   }
 }
 
+function receive_patterns(base_patterns) {
+  // Receives loaded pattern data and reorganize it into thef form required.
+  PATTERNS = reorganize_patterns(base_patterns);
+  // TODO: DEBUG
+  console.log("Loaded patterns:");
+  console.log(PATTERNS);
+}
+
 function rotate_pattern(p, r) {
   // Returns a rotated version of a pattern (specified as a SIZE*SIZE-element
-  // next-list). Rotations are clockwise by 90 degrees each, up to 3.
+  // ordered-index list). Rotations are clockwise by 90 degrees each, up to 3.
   r = ((r % 4) + 4) % 4;
   let result = p;
   for (let i = 0; i < r; ++i) {
@@ -907,6 +1125,22 @@ function clockwise(rc) {
     rc[1],
     (PATTERN_SIZE - 1) - rc[0]
   ];
+}
+
+function rotate_ec(ec, rot) {
+  let ori = ec[0];
+  let socket = ec[1];
+  let rori = absolute_orientation(ori, rot);
+  if (ori % 2 == 0) {
+    if (rot > 1) {
+      socket = flip_socket(socket);
+    }
+  } else {
+    if (rot == 1 || rot == 2) {
+      socket = flip_socket(socket);
+    }
+  }
+  return [ rori, socket ];
 }
 
 function reorganize_patterns(patterns) {
@@ -936,60 +1170,48 @@ function reorganize_patterns(patterns) {
   //   positions: Arrays that map from linear index to pattern index, same as
   //              the input, but with some duplications where patterns with
   //              corner exits can be interpreted as having exits on different
-  //              sides.
+  //              sides, and to account for all four possible rotations of each
+  //              pattern.
   //   indices: Arrays that map from pattern index to linear index, the inverse
   //            of the input.
-  //   lookup: A table mapping entrance IDs to tables mapping exit IDs to lists
-  //           of pattern indices (indices in the patterns list).
+  //   orientations: Arrays that map from linear index to cell orientation
+  //                 (which edge borders the previous cell).
   //   entrances: An array storing the entrance socket for each pattern.
   //   exits: An array storing the exit orientation and socket for each pattern.
-  //
-  let positions = [];
-  let lookup = {};
-  let indices = [];
-  let entrances = [];
-  let exits = [];
+  //   lookup: A table mapping entrance IDs to tables mapping exit IDs to lists
+  //           of pattern indices (indices in the patterns list).
 
-  let didx = 0;
+
+  // Empty result:
+  let result = {
+    "positions": [],
+    "indices": [],
+    "orientations": [],
+    "entrances": [],
+    "exits": [],
+    "lookup": {},
+  }
+
   for (let pidx in patterns) {
     let p = patterns[pidx];
-
-    // Construct inverse pattern
-    let antipattern = [];
-    for (let i = 0; i < p.length; ++i) {
-      let idx = p[i];
-      antipattern[idx] = i;
-    }
 
     // Categorize by entrance:
     let entrance = p[0];
     let npc = idx__pc(entrance);
     let nec = pc__ec(npc, false); // always hits the West edge
     let nid = ec__eid(nec);
-    if (!lookup.hasOwnProperty(nid)) {
-      lookup[nid] = {};
-    }
-    by_en = lookup[eid];
 
     // Within entrance object, categorize by exit:
     let exit = p[p.length-1];
     let xpc = idx__pc(exit);
     let v_xec = pc__ec(xpc, false);
+    let v_xid = undefined;
     let hit = false;
     if (v_xec != undefined && v_xec[0] != PATTERN_ENTRANCE_ORIENTATION) {
       // exclude U-turns
-      let v_xid = ec__eid(v_xec);
-      if (!by_en.hasOwnProperty(v_xid)) {
-        by_en[v_xid] = [];
-      }
-      // Add to lookup table:
-      by_end[v_xid].push(didx);
-      // Push entrances, exits, pattern, and antipattern
-      entrances[didx] = nec[1]; // just the socket; ori is always West
-      exits[didx] = v_xec.slice(); // both ori and socket
-      positions[didx] = p.slice();
-      indices[didx] = antipattern.slice();
-      didx += 1; // increment index;
+      v_xid = ec__eid(v_xec);
+      // Register this pattern and its rotations.
+      register_pattern(result, nec, v_xec, p);
       hit = true;
     }
     // might (also) be interpretable as an exit on a horizontal edge
@@ -999,17 +1221,7 @@ function reorganize_patterns(patterns) {
     if (h_xec != undefined) {
       let h_xid = ec__eid(h_xec);
       if (h_xid != v_xid) {
-        if (!by_end.hasOwnProperty(h_xid)) {
-          by_en[h_xid] = [];
-        }
-        // Add to lookup table:
-        by_en[h_xid].push(pidx);
-        // Push entrances, exits, pattern, and antipattern
-        entrances[didx] = nec[1]; // just the socket; ori is always West
-        exits[didx] = h_xec.slice(); // both ori and socket
-        positions[didx] = p.slice();
-        indices[didx] = antipattern.slice();
-        didx += 1; // increment index;
+        register_pattern(result, nec, h_xec, p);
         hit = true;
       }
     }
@@ -1018,58 +1230,97 @@ function reorganize_patterns(patterns) {
     }
   }
 
-  return {
-    "positions": positions,
-    "indices": indices,
-    "lookup": lookup,
-    "entrances": entrances,
-    "exits": exits
+  return result;
+}
+
+function register_pattern(
+  registry,
+  nec,
+  xec,
+  pattern
+) {
+  // Takes a registry, an entrance coordinate, an exit coordinate, and a
+  // pattern, and registers a new pattern, including all four possible
+  // orientations of that pattern (does not deal with exit ambiguity).
+  for (rot = 0; rot < 4; ++rot) {
+    // All four possible rotations
+
+    // this will be the pattern index of the newly-registered pattern
+    let pidx = registry.positions.length;
+
+    // Create rotated pattern and push onto our positions list:
+    let rp = rotate_pattern(pattern, rot);
+    registry.positions.push(rp);
+
+    // Rotated entrance and exit coordinates:
+    let rnec = rotate_ec(nec, rot);
+    let rxec = rotate_ec(xec, rot);
+    registry.entrances.push(rnec);
+    registry.exits.push(rxec);
+
+    // Construct inverse pattern
+    let antipattern = [];
+    for (let i = 0; i < rp.length; ++i) {
+      let idx = rp[i];
+      antipattern[idx] = i;
+    }
+    registry.indices.push(antipattern);
+
+    // Construct orientations pattern
+    registry.orientations.push(pattern_orientations(rp, rnec[0]));
+
+    // Add this pattern to the lookup table:
+    let nid = ec__eid(rnec);
+    let xid = ec__eid(rxec);
+    if (rnec[1] < 0) {
+      console.log(["QQ", nec, rnec, nid]);
+    }
+    if (!registry.lookup.hasOwnProperty(nid)) {
+      registry.lookup[nid] = {};
+    }
+    let by_en = registry.lookup[nid];
+    if (!by_en.hasOwnProperty(xid)) {
+      by_en[xid] = [];
+    }
+    let lu = by_en[xid];
+    lu.push(pidx);
   }
 }
 
 function pattern_possibilities(nc, xc) {
-  // Takes entrance and exit coordinates and returns a list of all patterns
-  // that have that entrance and that exit. Coordinates may be underspecified,
-  // in which case the list of all possible patterns that match all constraints
-  // given is returned.
+  // Takes entrance and exit coordinates and returns a list of the indices of
+  // all patterns that have that entrance and that exit. Coordinates may be
+  // underspecified, in which case the list of all possible patterns that match
+  // all constraints given is returned.
   let n_specific = nc[1] != undefined;
   let x_specific = xc[1] != undefined;
 
-  let n_ori = nc[0];
-  let x_ori = xc[0];
-
-  // Compute rotation value that gets the entrance to the normalized side:
-  let rot = rotations_between(n_ori, PATTERN_ENTRANCE_ORIENTATION);
-
-  // Compute rotated coords and IDs:
-  let rnc = [ n_ori + rot, nc[1] ];
-  let rxc = [ x_ori + rot, xc[1] ];
-
-  let rnid = ec__eid(rnc);
-  let rxid = ec__eid(rxc);
+  let nid = ec__eid(nc);
+  let xid = ec__eid(xc);
 
   // Lookup table:
   let lu = PATTERNS.lookup;
 
   let result = [];
   if (n_specific) {
-    exlu = lu[rnid]; // exit lookup
+    exlu = lu[nid]; // exit lookup
+    console.log([nid, exlu, lu]);
     if (x_specific) { // specific entrance and exit
-      result = exlu[rxid].slice();
+      result = exlu[xid].slice();
     } else { // specific entrance, nonspecific exit
-      let matches = ec__eids(rxc);
+      let matches = ec__eids(xc);
       for (let exid of matches) {
         result = result.concat(exlu[exid]);
       }
     }
   } else { // nonspecific entrance
-    let n_matches = ec__eids(rnc);
+    let n_matches = ec__eids(nc);
     for (let enid of n_matches) {
       let exlu = lu[enid]; // exit lookup
       if (x_specific) { // but specific exit
-        result = result.concat(exlu[rxid]);
+        result = result.concat(exlu[xid]);
       } else { // nonspecific exit too
-        let x_matches = ex__eids(rxc);
+        let x_matches = ec__eids(xc);
         for (let exid of x_matches) {
           result = result.concat(exlu[exid]);
         }
@@ -1077,6 +1328,175 @@ function pattern_possibilities(nc, xc) {
     }
   }
 
-  let unrot = opposite_rotation(rot);
-  return result.map(p => rotate_pattern(p, unrot));
+  return result;
+}
+
+function central_possibilities(nori, xori) {
+  // Returns a list of pattern indices containing all possible patterns whose
+  // central cell has the given entrance and exit orientations.
+  let result = [];
+  let center = Math.floor((PATTERN_SIZE * PATTERN_SIZE) / 2);
+  for (let pidx = 0; pidx < PATTERNS.positions.length; ++pidx) {
+    let cidx = PATTERNS.indices[pidx][center];
+    let orientations = PATTERNS.orientations[cidx];
+    if (
+      nori == orientations[cidx]
+   && xori == opposite_side(orientations[cidx + 1])
+    ) {
+      result.push(pidx);
+    }
+  }
+  return result;
+}
+
+function pattern_orientations(pattern, start_orientation) {
+  // Takes a pattern and the orientation of its first cell (the direction that
+  // that cell is entered from) and returns a list of orientations for each
+  // cell in the pattern.
+
+  let ori_list = [];
+
+  // Entrance has same orientation as the pattern's entrance side.
+  ori_list[0] = start_orientation;
+  for (let i = 1; i < pattern.length; ++i) {
+    // Compute orientation of each cell based on previous cell coords:
+    let idx = pattern[i];
+    let pr_idx = pattern[i-1];
+    let pr_pc = idx__pc(pr_idx);
+    let hr_pc = idx__pc(idx);
+    ori_list[i] = nbs__ori(pr_pc, hr_pc);
+  }
+
+  return ori_list;
+}
+
+// -------
+// Testing
+// -------
+
+tests = [
+  [
+    "pattern_orientations",
+    pattern_orientations(
+      [
+        24, 23, 22, 17, 18,
+        19, 14, 13, 8, 9,
+        4, 3, 2, 1, 0,
+        5, 6, 7, 12, 11,
+        10, 15, 16, 21, 20
+      ],
+      1
+    ),
+    [
+      1, 1, 1, 2, 3,
+      3, 2, 1, 2, 3,
+      2, 1, 1, 1, 1,
+      0, 3, 3, 0, 1,
+      1, 0, 3, 0, 1
+    ]
+  ],
+];
+
+function same(v1, v2) {
+  try {
+    if (Array.isArray(v1)) {
+      for (let i = 0; i < v1.length; ++i) {
+        if (!same(v1[i], v2[i])) {
+          return false;
+        }
+      }
+      return true;
+    } else { // TODO: Objects
+      return v1 == v2;
+    }
+  } catch {
+    return false;
+  }
+}
+
+let failed = false;
+for (let i in tests) {
+  let t = tests[i];
+  let name = t[0];
+  let v1 = t[1];
+  let v2 = t[2];
+  if (!same(v1, v2)) {
+    console.error("Test '" + name + "' (#" + i + ") failed.");
+    console.log("Expected:");
+    console.log(v2);
+    console.log("Got:");
+    console.log(v1);
+    failed = true;
+  }
+}
+
+// --------------------
+// Onload Functionality
+// --------------------
+
+// Run when the document is loaded unless a test failed:
+if (!failed) {
+  window.onload = function () {
+    // Start pattern-loading process immediately
+    load_patterns();
+
+    // Grab canvas & context:
+    let canvas = document.getElementById("labyrinth");
+    CTX = canvas.getContext("2d");
+
+    // Set initial canvas size & scale:
+    update_canvas_size(canvas, CTX);
+    set_scale(CTX, 1);
+    set_destination(CTX, [0, 0]);
+
+    // Set up trails:
+    CTX.trails = [
+      { "seed": 19283801, "positions": [] },
+      { "seed": 74982018, "positions": [] },
+      { "seed": 57319834, "positions": [] },
+    ];
+    for (let tr of CTX.trails) {
+      for (let i = 0; i < TRAIL_LENGTH; ++i) {
+        tr.positions.push([0, 0]);
+      }
+    }
+
+    // Listen for window resizes but wait until 20 ms after the last consecutive
+    // one to do anything.
+    var timer_id = undefined;
+    window.addEventListener("resize", function() {
+      if (timer_id != undefined) {
+        clearTimeout(timer_id);
+        timer_id = undefined;
+      }
+      timer_id = setTimeout(
+        function () {
+          timer_id = undefined;
+          update_canvas_size(canvas, CTX);
+        },
+        20 // milliseconds
+      );
+    });
+
+    // Scrolling updates scale:
+    document.onwheel = function(ev) {
+      if (ev.preventDefault) { ev.preventDefault(); }
+      handle_scroll(CTX, ev);
+    }
+
+    // Clicking sets destination:
+    document.onmouseup = function (ev) {
+      if (ev.preventDefault) { ev.preventDefault(); }
+      handle_tap(CTX, ev);
+    }
+    document.ontouchend = document.onmouseup;
+    // TODO: Really this?
+    document.ontouchcancel = document.onmouseup;
+
+    // Draw every frame
+    window.requestAnimationFrame(draw_frame);
+
+    // Kick off generation subsystem
+    gen_step();
+  };
 }
