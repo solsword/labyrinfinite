@@ -53,7 +53,8 @@ var WEST = 3;
 var FRAME = 0;
 
 // When the frame counter resets:
-var MAX_FC = 10000000;
+var MAX_FC = 1000;
+// var MAX_FC = 10000000;
 
 // -------------------------
 // Updaters & Event Handlers
@@ -420,9 +421,6 @@ function draw_labyrinth(ctx) {
 
       // Draw a from-link for each cell
       let fc = ac__fr([x, y]);
-      if (FRAME % 1000 == 0) {
-        console.log([[x, y], fc]);
-      }
       let height = fc[0];
       let trace = fc[1];
       let bilayer = lookup_bilayer([height, trace.slice(0, trace.length - 1)]);
@@ -444,9 +442,6 @@ function draw_labyrinth(ctx) {
         // Look up cell orientation:
         let pattern = bilayer.pattern;
         let ori = PATTERNS.orientations[bilayer.pattern][pidx];
-        if (FRAME % 1000 == 0) {
-          console.log([bilayer.pattern, pidx, ori]);
-        }
 
         // Neighbor in that direction & canvas coords for that neighbor:
         let yx_nb = ori__nb([y, x], ori);
@@ -831,10 +826,6 @@ function gen_central_bilayer(height, child_bilayer) {
 
     // Compute possibilities and pick a pattern:
     let poss = central_possibilities(c_nori, c_xori);
-    console.log([c_nori, c_xori]);
-    console.log("Poss: ");
-    console.log(poss);
-    // TODO: How can poss turn up empty?!?
     result.pattern = choose_randomly(poss, lfsr(seed + 61987291));
 
     // Embed our child pattern:
@@ -880,7 +871,6 @@ function gen_bilayer(parent_fc, parent_bilayer, index) {
 
  // Look up the pattern index in our parent:
  let pattern = parent_bilayer.sub_patterns[index];
- console.log("NRM: " + pattern);
  
  // Create result
  result = {
@@ -922,6 +912,14 @@ function isolate_center_pattern(bilayer) {
   // That pattern's entrance and exit:
   let nec = PATTERNS.entrances[constraint];
   let xec = PATTERNS.exits[constraint];
+  // TODO: DEBUG
+  /*
+  let c_nori = PATTERNS.orientations[bilayer.pattern][cidx];
+  let c_xori = opposite_side(PATTERNS.orientations[bilayer.pattern][next]);
+  if (c_nori != nec[0] || c_xori != xec[0]) {
+    console.error("Super/sub-pattern orientation mismatch.");
+  }
+  */
 
   // The partner edge coordinates for those:
   let pr_xec = [ opposite_side(nec[0]), nec[1] ];
@@ -929,7 +927,7 @@ function isolate_center_pattern(bilayer) {
 
   // Orientations for entrance to previous and exit from next:
   let pr_nori = PATTERNS.orientations[bilayer.pattern][prev];
-  let nx_xori = PATTERNS.orientations[bilayer.pattern][next];
+  let nx_xori = opposite_side(PATTERNS.orientations[bilayer.pattern][next+1]);
 
   // Pick valve sockets
   let pr_valve = random_universal_socket(seed);
@@ -967,8 +965,6 @@ function set_edge_patterns(bilayer) {
   let st_xori = opposite_side(PATTERNS.orientations[bilayer.pattern][1]);
   let ed = superpattern[last];
   let ed_nori = PATTERNS.orientations[bilayer.pattern][last];
-
-  console.log([xec[0], ed_nori]);
 
   // Observe or pick start valve socket:
   let st_next = superpattern[1];
@@ -1295,6 +1291,10 @@ function pattern_possibilities(nc, xc) {
   let n_specific = nc[1] != undefined;
   let x_specific = xc[1] != undefined;
 
+  if (nc[0] == xc[0]) {
+    console.error("Same side entrance/exit in pattern_possibilities.");
+  }
+
   let nid = ec__eid(nc);
   let xid = ec__eid(xc);
 
@@ -1304,7 +1304,6 @@ function pattern_possibilities(nc, xc) {
   let result = [];
   if (n_specific) {
     exlu = lu[nid]; // exit lookup
-    console.log([nid, exlu, lu]);
     if (x_specific) { // specific entrance and exit
       result = exlu[xid].slice();
     } else { // specific entrance, nonspecific exit
@@ -1338,7 +1337,7 @@ function central_possibilities(nori, xori) {
   let center = Math.floor((PATTERN_SIZE * PATTERN_SIZE) / 2);
   for (let pidx = 0; pidx < PATTERNS.positions.length; ++pidx) {
     let cidx = PATTERNS.indices[pidx][center];
-    let orientations = PATTERNS.orientations[cidx];
+    let orientations = PATTERNS.orientations[pidx];
     if (
       nori == orientations[cidx]
    && xori == opposite_side(orientations[cidx + 1])
@@ -1394,6 +1393,103 @@ tests = [
       0, 3, 3, 0, 1,
       1, 0, 3, 0, 1
     ]
+  ],
+  [ "clockwise:0", clockwise([4, 4]), [4, 0] ],
+  [ "clockwise:1", clockwise([3, 1]), [1, 1] ],
+  [ "clockwise:2", clockwise([3, 2]), [2, 1] ],
+  [ "clockwise:3", clockwise([0, 0]), [0, 4] ],
+  [ "clockwise:4", clockwise([3, 0]), [0, 1] ],
+  [ "idx__pc:0", idx__pc(24), [4, 4] ],
+  [ "idx__pc:1", idx__pc(23), [4, 3] ],
+  [ "idx__pc:2", idx__pc(12), [2, 2] ],
+  [ "idx__pc:3", idx__pc(7), [1, 2] ],
+  [ "idx__pc:4", idx__pc(15), [3, 0] ],
+  [ "idx__pc__idx:0", pc__idx(idx__pc(7)), 7 ],
+  [ "idx__pc__idx:1", pc__idx(idx__pc(15)), 15 ],
+  [ "idx__pc__idx:2", pc__idx(idx__pc(20)), 20 ],
+  [ "ridx:0", pc__idx(clockwise(idx__pc(20))), 0 ],
+  [ "ridx:1", pc__idx(clockwise(idx__pc(0))), 4 ],
+  [ "ridx:2", pc__idx(clockwise(idx__pc(15))), 1 ],
+  [ "ridx:3", pc__idx(clockwise(idx__pc(24))), 20 ],
+  [
+    "rotate_pattern:0",
+    rotate_pattern(
+      [
+        24, 23, 22, 17, 18,
+        19, 14, 13, 8, 9,
+        4, 3, 2, 1, 0,
+        5, 6, 7, 12, 11,
+        10, 15, 16, 21, 20
+      ],
+      0
+    ),
+    [
+      24, 23, 22, 17, 18,
+      19, 14, 13, 8, 9,
+      4, 3, 2, 1, 0,
+      5, 6, 7, 12, 11,
+      10, 15, 16, 21, 20
+    ],
+  ],
+  [
+    "rotate_pattern:1",
+    rotate_pattern(
+      [
+        24, 23, 22, 17, 18,
+        19, 14, 13,  8,  9,
+         4,  3,  2,  1,  0,
+         5,  6,  7, 12, 11,
+        10, 15, 16, 21, 20
+      ],
+      1
+    ),
+    [
+      20, 15, 10, 11, 16,
+      21, 22, 17, 18, 23,
+      24, 19, 14,  9,  4,
+       3,  8, 13, 12,  7,
+       2,  1,  6,  5,  0
+    ],
+  ],
+  [
+    "rotate_pattern:2",
+    rotate_pattern(
+      [
+        24, 23, 22, 17, 18,
+        19, 14, 13,  8,  9,
+         4,  3,  2,  1,  0,
+         5,  6,  7, 12, 11,
+        10, 15, 16, 21, 20
+      ],
+      2
+    ),
+    [
+       0,  1,  2,  7,  6,
+       5, 10, 11, 16, 15,
+      20, 21, 22, 23, 24,
+      19, 18, 17, 12, 13,
+      14,  9,  8,  3,  4
+    ],
+  ],
+  [
+    "rotate_pattern:3",
+    rotate_pattern(
+      [
+        24, 23, 22, 17, 18,
+        19, 14, 13,  8,  9,
+         4,  3,  2,  1,  0,
+         5,  6,  7, 12, 11,
+        10, 15, 16, 21, 20
+      ],
+      3
+    ),
+    [
+       4,  9, 14, 13,  8,
+       3,  2,  7,  6,  1,
+       0,  5, 10, 15, 20,
+       21, 16, 11, 12, 17,
+       22, 23, 18, 19, 24
+    ],
   ],
 ];
 
