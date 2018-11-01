@@ -59,6 +59,10 @@ var MAX_FC = 1000;
 // Object placeholder for things we're in the process of generating:
 var WORKING_ON_IT = {};
 
+// Whether to double-check generation integrity or to assume things work
+// correctly.
+var CHECK_GEN_INTEGRITY = true;
+
 // -------------------------
 // Updaters & Event Handlers
 // -------------------------
@@ -249,7 +253,7 @@ function ec__eids(ec) {
   if (ec[1] != undefined) {
     result.push(ec__eid(ec));
   } else {
-    for (let i = 0; i < Math.floor(PATTERN_SIZE/2); ++i) {
+    for (let i = 0; i <= Math.floor(PATTERN_SIZE/2); ++i) {
       result.push(ec__eid([ec[0], i]));
     }
   }
@@ -487,6 +491,13 @@ function draw_labyrinth(ctx) {
         ctx.beginPath();
         ctx.moveTo(st_cc[0], st_cc[1]);
         ctx.lineTo(cc[0], cc[1]);
+        // TODO: DEBUG
+        // TODO: HERE
+        ctx.strokeText(
+          "" + [x, y] + ":" + fc[1][fc[1].length - 1],
+          cc[0],
+          cc[1]
+        );
         ctx.stroke();
       }
     }
@@ -640,8 +651,8 @@ function ac__fc(ac) {
   ]; // relative coordinates
 
   pc = [ // compute first local pattern coordinates
-    Math.floor(rc[1] / cw),
-    Math.floor(rc[0] / cw)
+    Math.floor(rc[1] / cw), // row from y
+    Math.floor(rc[0] / cw)  // col from x
   ];
 
   // push first index onto trace
@@ -657,8 +668,8 @@ function ac__fc(ac) {
     cw /= 5;
 
     pc = [ // compute next local pattern coordinates
-      Math.floor(rc[1] / cw),
-      Math.floor(rc[0] / cw)
+      Math.floor(rc[1] / cw), // row from y
+      Math.floor(rc[0] / cw) // col from x
     ];
 
     // push index onto trace
@@ -680,16 +691,7 @@ function fc__edge_ac(fc, edge) {
 
   let pw = Math.pow(5, edge_height+1); // width of a pattern
 
-  let ev; // edge vector
-  if (edge == 0) { // North
-    ev = [0, 1]; 
-  } else if (edge == 1) { // East
-    ev = [1, 0];
-  } else if (edge == 2) { // South
-    ev = [0, -1];
-  } else { // West
-    ev = [-1, 0];
-  }
+  let ev = ori__vec(edge); // edge vector
   return [
     ac[0] + ev[0] * pw/2,
     ac[1] + ev[1] * pw/2
@@ -731,7 +733,7 @@ function edge_seed(fr_coords, edge) {
   let ec = fc__edge_ac(fr_coords, edge);
   let height = 1 + (fr_coords[0] - fr_coords[1].length);
   let seed = 75928103;
-  let mix = ((seed + (17*ec[0])) ^ ec[1]) * (height + 3);
+  let mix = ((seed + (17*ec[0])) ^ ec[1]) + 3*height;
   let churn = mix % 4;
   for (let i = 0; i < churn; ++i) {
     mix = lfsr(mix + height);
@@ -890,8 +892,16 @@ function gen_central_bilayer(height, child_bilayer) {
     result.sub_patterns = null; // there are no sub-patterns
     result.children = null; // there are no children
 
-    // Pattern chosen completely at random:
-    result.pattern = randint(PATTERNS.positions.length, lfsr(seed + 31893123));
+    // Pick random entrance/exit orientations:
+    let nori = randint(4, lfsr(seed + 75981238));
+    let xori = randint(4, lfsr(seed + 3127948));
+
+    // Pattern chosen so that its entrance and exit will have the appropriate
+    // edge sockets for their neighbors.
+    let n_socket = random_socket(edge_seed(fc, nori));
+    let x_socket = random_socket(edge_seed(fc, xori));
+    let poss = pattern_possibilities([nori, n_socket], [xori, x_socket]);
+    result.pattern = choose_randomly(poss, lfsr(seed + 817293891));
   }
 
   // Only set sub-patterns if we're above the bottom layer:
@@ -923,6 +933,9 @@ function gen_bilayer(parent_fc, parent_bilayer, index) {
 
  // Look up the pattern index in our parent:
  let pattern = parent_bilayer.sub_patterns[index];
+ if (pattern == undefined) {
+   console.log(parent_bilayer);
+ }
  
  // Create result
  result = {
@@ -938,6 +951,17 @@ function gen_bilayer(parent_fc, parent_bilayer, index) {
 
   // Fill remaining patterns:
   fill_patterns(result);
+
+  if (CHECK_GEN_INTEGRITY) {
+    if (result.pattern != parent_bilayer.sub_patterns[index]) {
+      console.error("Super/sub pattern index mismatch.");
+    }
+    for (let i = 0; i < PATTERN_SIZE * PATTERN_SIZE; ++i) {
+      if (result.sub_patterns[i] == undefined) {
+        console.error("Undefined sub_pattern after fill_patterns.");
+      }
+    }
+  }
 
   return result;
 }
@@ -1003,6 +1027,9 @@ function set_edge_patterns(bilayer) {
   let coords = bilayer.coords;
 
   let superpattern = PATTERNS.positions[bilayer.pattern];
+  if (superpattern == undefined) {
+    console.log(bilayer);
+  }
   let last = superpattern.length - 1;
   let nec = PATTERNS.entrances[bilayer.pattern];
   let xec = PATTERNS.exits[bilayer.pattern];
@@ -1099,7 +1126,39 @@ function fill_patterns(bilayer) {
 
       // Pick a random pattern that fits:
       bilayer.sub_patterns[idx] = choose_randomly(poss, seed);
+      if (bilayer.sub_patterns[idx] == undefined) {
+        console.error("Pick fail.");
+      }
       seed = lfsr(seed);
+    }
+  }
+
+  // TODO: DEBUG
+  if (CHECK_GEN_INTEGRITY) {
+    for (let i = 0; i < superpattern.length; ++i) {
+      let lidx = PATTERNS.indices[bilayer.pattern][i];
+      let ori = PATTERNS.orientations[bilayer.pattern][lidx];
+      if (lidx > 0) {
+        let pr_pidx = superpattern[lidx - 1];
+        let vec = ori__vec(ori);
+        let pc = idx__pc(i);
+        let pr_pc = [pc[0] + vec[1], pc[1] + vec[0]];
+        if (pr_pidx != pc__idx(pr_pc)) {
+          console.error(
+            ["Filled pattern ORI mismatch", lidx, pr_pidx, ori, vec, pc, pr_pc]
+          );
+        }
+        if (PATTERNS.entrances[bilayer.sub_patterns[i]][0] != ori) {
+          console.error("Subpatern entrance/ORI mismatch");
+        }
+        if (lidx < superpattern.length - 1) {
+          let next_ori = PATTERNS.orientations[bilayer.pattern][lidx+1];
+          let exit = PATTERNS.exits[bilayer.sub_patterns[i]][0];
+          if (exit != opposite_side(next_ori)) {
+            console.error("Subpattern exit/ORI mismatch");
+          }
+        }
+      }
     }
   }
 }
@@ -1367,7 +1426,10 @@ function pattern_possibilities(nc, xc) {
       } else { // nonspecific exit too
         let x_matches = ec__eids(xc);
         for (let exid of x_matches) {
-          result = result.concat(exlu[exid]);
+          let joint = exlu[exid];
+          if (joint != undefined) {
+            result = result.concat(joint);
+          }
         }
       }
     }
@@ -1592,6 +1654,8 @@ function test_register_pattern() {
 }
 
 var TESTS = [
+  [ "edge_seed:0", edge_seed([1, [4]], 2), edge_seed([1, [9]], 0) ],
+  [ "edge_seed:1", edge_seed([1, [1]], 0), edge_seed([2, [7, 21]], 2) ],
   [ "orientation_at", orientation_at([0, []]), undefined ],
   [ "register_pattern", test_register_pattern(), undefined ],
   [
