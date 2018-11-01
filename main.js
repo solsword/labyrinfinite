@@ -24,7 +24,7 @@ var GRID_COLOR = "white";
 var PATTERN_SIZE = 5;
 
 // The fractally increasing bilayer cache. Values in the process of being
-// generated are represented by null, while never-requested values are
+// generated are represented by WORKING_ON_IT, while never-requested values are
 // undefined.
 var BILAYER_CACHE = [];
 
@@ -55,6 +55,9 @@ var FRAME = 0;
 // When the frame counter resets:
 var MAX_FC = 1000;
 // var MAX_FC = 10000000;
+
+// Object placeholder for things we're in the process of generating:
+var WORKING_ON_IT = {};
 
 // -------------------------
 // Updaters & Event Handlers
@@ -151,16 +154,21 @@ function cc__vc(ctx, cc) {
 // Canvas <-> world coordinates
 function cc__wc(ctx, cc) {
   return [
-    (cc[0]/ctx.cwidth) * ctx.scale,
-    (cc[1]/ctx.cwidth) * ctx.scale // scale ignores canvas height
+    ((cc[0] - ctx.cwidth/2)/ctx.cwidth) * ctx.scale,
+    ((cc[1] - ctx.cheight/2)/ctx.cwidth) * ctx.scale // scale ignores height
   ];
 }
 
 function wc__cc(ctx, wc) {
   return [
-    (wc[0] / ctx.scale) * ctx.cwidth,
-    (wc[1] / ctx.scale) * ctx.cwidth
+    (wc[0] / ctx.scale) * ctx.cwidth + ctx.cwidth/2,
+    (wc[1] / ctx.scale) * ctx.cwidth + ctx.cheight/2
   ];
+}
+
+function canvas_unit(ctx) {
+  // Returns the length of one world-coordinate unit in canvas coordinates.
+  return wc__cc(ctx, [1, 0])[0] - ctx.cwidth/2;
 }
 
 // World <-> grid coordinates
@@ -333,6 +341,23 @@ function ori__nb(pc, ori) {
     return [ pc[0] + 1, pc[1] ];
   } else if (ori == WEST) {
     return [ pc[0], pc[1] - 1 ];
+  } else {
+    console.error("Bad orientation: " + ori);
+  }
+}
+
+function ori__vec(ori) {
+  // Converts an orientation into an [x, y] direction vector.
+  if (ori == NORTH) {
+    return [0, -1];
+  } else if (ori == EAST) {
+    return [1, 0];
+  } else if (ori == SOUTH) {
+    return [0, 1];
+  } else if (ori == WEST) {
+    return [-1, 0];
+  } else {
+    console.error("Bad orientation: " + ori);
   }
 }
 
@@ -398,6 +423,27 @@ function adjust_scale(ctx) {
   );
 }
 
+function orientation_at(fc) {
+  // Returns the orientation of the cell at the given fractal coordinates, or
+  // undefined if sufficient information has not yet been cached. Requests the
+  // generation of new bilayers as appropriate because it uses lookup_bilayer.
+
+  let height = fc[0];
+  let trace = fc[1];
+  let bilayer = lookup_bilayer([height, trace.slice(0, trace.length - 1)]);
+
+  // Our trace and pattern index:
+  let pidx = trace[trace.length - 1];
+
+  if (bilayer == undefined) { // not available yet; has been requested
+    return undefined;
+  }
+
+  // Look up cell orientation:
+  let lidx = PATTERNS.indices[bilayer.pattern][pidx];
+  return PATTERNS.orientations[bilayer.pattern][lidx];
+}
+
 function draw_labyrinth(ctx) {
   // Draws the visible portion of the labyrinth
 
@@ -409,47 +455,37 @@ function draw_labyrinth(ctx) {
   ctx.strokeStyle = GRID_COLOR;
 
   // Radius of each grid cell
-  // TODO: Why is this 500!?!
-  let r = 400 / ctx.scale;
+  let cell_size = canvas_unit(ctx);
 
   // Iterate over visible (and a few invisible) cells at the base layer:
   let extrema = grid_extrema(ctx);
   for (let x = extrema['NW'][0] - 1; x <= extrema['NE'][0] + 1; ++x) {
-    for (let y = extrema['NW'][0] - 1; y <= extrema['NE'][0] + 1; ++y) {
+    for (let y = extrema['NW'][1] - 1; y <= extrema['SW'][1] + 1; ++y) {
       // Canvas coordinates for this grid cell:
       let cc = wc__cc(ctx, gc__wc([ x, y ]));
 
       // Draw a from-link for each cell
-      let fc = ac__fr([x, y]);
-      let height = fc[0];
-      let trace = fc[1];
-      let bilayer = lookup_bilayer([height, trace.slice(0, trace.length - 1)]);
+      let fc = ac__fc([x, y]);
+      let ori = orientation_at(fc);
 
-      // Our trace and pattern index:
-      let pidx = trace[trace.length - 1];
-
-      if (bilayer == undefined) { // not available yet; has been requested
-
+      if (ori == undefined) { // not available yet; has been requested
         // Just draw a circle
         ctx.beginPath();
-        ctx.arc(cc[0], cc[1], r, 0, 2*Math.PI);
+        ctx.arc(cc[0], cc[1], cell_size*0.2, 0, 2*Math.PI);
         ctx.stroke();
 
-      } else {
-
-        // Draw a from-link
-
-        // Look up cell orientation:
-        let pattern = bilayer.pattern;
-        let ori = PATTERNS.orientations[bilayer.pattern][pidx];
+      } else { // Draw a from-link
 
         // Neighbor in that direction & canvas coords for that neighbor:
-        let yx_nb = ori__nb([y, x], ori);
-        let st_cc = wc__cc(ctx, gc__wc([ yx_nb[1], yx_nb[0] ]));
+        let vec = ori__vec(ori);
+        let st_cc = [
+          cc[0] + vec[0] * cell_size,
+          cc[1] + vec[1] * cell_size
+        ];
 
         // Draw a simple line:
-        ctx.moveTo(st_cc[0], st_cc[1]);
         ctx.beginPath();
+        ctx.moveTo(st_cc[0], st_cc[1]);
         ctx.lineTo(cc[0], cc[1]);
         ctx.stroke();
       }
@@ -566,9 +602,9 @@ function flip_socket(socket) {
 // which case the fractal coordinates denote a bilayer above the base grid
 // cells.
 
-function fr__ac(fr) {
-  let height = fr[0];
-  let trace = fr[1];
+function fc__ac(fc) {
+  let height = fc[0];
+  let trace = fc[1];
 
   let cw = Math.pow(5, height); // width of a single cell
   let result = [0, 0]; // center coordinates at the top are always 0, 0.
@@ -586,8 +622,12 @@ function fr__ac(fr) {
   return result;
 }
 
-function ac__fr(ac) {
+function ac__fc(ac) {
   let distance = Math.max(Math.abs(ac[0]), Math.abs(ac[1]));
+  // special case for the origin:
+  if (distance == 0) {
+    return [ 0, [ 12 ] ];
+  }
   // factor of two here because each n×n is centered at the origin, so only n/2
   // of it extends away from the origin.
   let height = Math.floor(Math.log(distance*2) / Math.log(PATTERN_SIZE));
@@ -628,14 +668,14 @@ function ac__fr(ac) {
   return [height, trace];
 }
 
-function fr__edge_ac(fr, edge) {
-  // Works like fr__ac, but computes the coordinates of the middle of a
+function fc__edge_ac(fc, edge) {
+  // Works like fc__ac, but computes the coordinates of the middle of a
   // specific edge of the given bilayer (or cell). The edge is specified using
   // a number from 0 to 3, denoting North, East, South, and West in that order.
-  let ac = fr__ac(fr);
+  let ac = fc__ac(fc);
 
-  let height = fr[0];
-  let trace = fr[1];
+  let height = fc[0];
+  let trace = fc[1];
   let edge_height = height - trace.length
 
   let pw = Math.pow(5, edge_height+1); // width of a pattern
@@ -653,6 +693,18 @@ function fr__edge_ac(fr, edge) {
   return [
     ac[0] + ev[0] * pw/2,
     ac[1] + ev[1] * pw/2
+  ];
+}
+
+function extend_fc(fc) {
+  // Extends the given fractal coordinates so that their height is increased by
+  // one while still denoting the same cell.
+  let height = fc[0];
+  let trace = fc[1];
+  let center = Math.floor((PATTERN_SIZE * PATTERN_SIZE) / 2);
+  return [
+    height + 1,
+    [ center ].concat(trace)
   ];
 }
 
@@ -676,7 +728,7 @@ function edge_seed(fr_coords, edge) {
   // Will return the same seed for both fractal + edge coordinates that
   // reference each edge (e.g., for a 5×5 pattern size, the West (#3) edge of
   // [0, [10]] and the East (#1) edge of [1, [11, 14]] are the same edge).
-  let ec = fr__edge_ac(fr_coords, edge);
+  let ec = fc__edge_ac(fr_coords, edge);
   let height = 1 + (fr_coords[0] - fr_coords[1].length);
   let seed = 75928103;
   let mix = ((seed + (17*ec[0])) ^ ec[1]) * (height + 3);
@@ -699,12 +751,12 @@ function central_coords(height) {
 // ------------------
 
 function request_central_bilayer() {
-  if (BILAYER_CACHE[BILAYER_CACHE.length - 1] == null) {
+  if (BILAYER_CACHE[BILAYER_CACHE.length - 1] == WORKING_ON_IT) {
     // We're already working on the next central bilayer
     return;
   }
   let height = BILAYER_CACHE.length;
-  BILAYER_CACHE[height] = null;
+  BILAYER_CACHE[height] = WORKING_ON_IT;
   let fr_coords = central_coords(height);
   GEN_QUEUE.push(fr_coords);
 }
@@ -721,18 +773,18 @@ function lookup_bilayer(fr_coords) {
     return undefined;
   }
   let ancestor = BILAYER_CACHE[height];
-  if (ancestor == null) {
+  if (ancestor == WORKING_ON_IT) {
     return undefined;
   }
   let sofar = [];
   for (let idx of trace) {
     sofar.push(idx);
-    if (ancestor.children[idx] == null) {
+    if (ancestor.children[idx] == WORKING_ON_IT) {
       // we're already working on it
       return undefined;
     } else if (ancestor.children[idx] == undefined) {
       // add this to our generation queue
-      ancestor.children[idx] = null;
+      ancestor.children[idx] = WORKING_ON_IT;
       GEN_QUEUE.push([ height, sofar ]);
       return undefined;
     } else {
@@ -760,7 +812,7 @@ function gen_next() {
   // Generates the next bilayer in the generation queue, first generating a
   // single extra level of the bilayer cache if at least one more has been
   // requested.
-  if (BILAYER_CACHE[BILAYER_CACHE.length - 1] == null) {
+  if (BILAYER_CACHE[BILAYER_CACHE.length - 1] == WORKING_ON_IT) {
     let above;
     if (BILAYER_CACHE.length > 1) {
       above = gen_central_bilayer(
@@ -784,10 +836,10 @@ function gen_next() {
   let last = trace.pop();
   let parent = lookup_bilayer([height, trace]);
   if (
-    parent != null
+    parent != WORKING_ON_IT
  && parent != undefined
  && parent.children != null
- && parent.children[last] == null
+ && parent.children[last] == WORKING_ON_IT
   ) {
     parent.children[last] = gen_bilayer([height, trace], parent, last);
   }
@@ -974,7 +1026,7 @@ function set_edge_patterns(bilayer) {
     seed = lfsr(seed);
   } else {
     let sub_next = bilayer.sub_patterns[st_next];
-    if (sub_next != undefined && sub_next != null) {
+    if (sub_next != undefined && sub_next != WORKING_ON_IT) {
       st_valve = PATTERNS.entrances[sub_next][1];
     } else {
       st_valve = random_universal_socket(seed);
@@ -990,7 +1042,7 @@ function set_edge_patterns(bilayer) {
     seed = lfsr(seed);
   } else {
     let sub_prev = bilayer.sub_patterns[ed_prev];
-    if (sub_prev != undefined && sub_prev != null) {
+    if (sub_prev != undefined && sub_prev != WORKING_ON_IT) {
       ed_valve = PATTERNS.exits[sub_prev][1];
     } else {
       ed_valve = random_universal_socket(seed);
@@ -1032,13 +1084,13 @@ function fill_patterns(bilayer) {
       // pick entrance/exit sockets
       let pxs = undefined; // previous exit socket
       let ppat = bilayer.sub_patterns[prev];
-      if (ppat != undefined && ppat != null) {
+      if (ppat != undefined && ppat != WORKING_ON_IT) {
         let pxs = PATTERNS.exits[ppat][1]; // just the socket
       }
 
       let nns = undefined; // next entrance socket
       let npat = bilayer.sub_patterns[next];
-      if (npat != undefined && npat != null) {
+      if (npat != undefined && npat != WORKING_ON_IT) {
         nns = PATTERNS.entrances[npat][1]; // just the socket
       }
 
@@ -1099,9 +1151,6 @@ function load_patterns() {
 function receive_patterns(base_patterns) {
   // Receives loaded pattern data and reorganize it into thef form required.
   PATTERNS = reorganize_patterns(base_patterns);
-  // TODO: DEBUG
-  console.log("Loaded patterns:");
-  console.log(PATTERNS);
 }
 
 function rotate_pattern(p, r) {
@@ -1268,9 +1317,6 @@ function register_pattern(
     // Add this pattern to the lookup table:
     let nid = ec__eid(rnec);
     let xid = ec__eid(rxec);
-    if (rnec[1] < 0) {
-      console.log(["QQ", nec, rnec, nid]);
-    }
     if (!registry.lookup.hasOwnProperty(nid)) {
       registry.lookup[nid] = {};
     }
@@ -1373,15 +1419,189 @@ function pattern_orientations(pattern, start_orientation) {
 // Testing
 // -------
 
-tests = [
+function test_register_pattern() {
+  let registry = {
+    "positions": [],
+    "indices": [],
+    "orientations": [],
+    "entrances": [],
+    "exits": [],
+    "lookup": {},
+  }
+  let p = [
+    24, 23, 22, 17, 18,
+    19, 14, 13,  8,  9,
+     4,  3,  2,  1,  0,
+     5,  6,  7, 12, 11,
+    10, 15, 16, 21, 20
+  ];
+  let p2 = [
+    20, 21, 22, 23, 24,
+    19, 14,  9,  4,  3,
+     8, 13, 18, 17, 16,
+    15, 10,  5,  6, 11,
+    12,  7,  2,  1,  0
+  ];
+  register_pattern(registry, [2, 2], [3, 2], p);
+  register_pattern(registry, [1, 2], [3, 2], p);
+  register_pattern(registry, [3, 2], [0, 0], p2);
+
+  let n_patterns = 12;
+
+  if (registry.positions.length != n_patterns) {
+    return "Wrong number of positions.";
+  }
+  if (
+    !same(
+      registry.positions[0],
+      [
+        24, 23, 22, 17, 18,
+        19, 14, 13,  8,  9,
+         4,  3,  2,  1,  0,
+         5,  6,  7, 12, 11,
+        10, 15, 16, 21, 20
+      ]
+    )
+  ) { return "positions[0] mismatch."; }
+  if (
+    !same(
+      registry.positions[1],
+      [
+        20, 15, 10, 11, 16,
+        21, 22, 17, 18, 23,
+        24, 19, 14,  9,  4,
+         3,  8, 13, 12,  7,
+         2,  1,  6,  5,  0
+      ]
+    )
+  ) { return "positions[1] mismatch."; }
+  if (
+    !same(
+      registry.positions[8],
+      [
+        20, 21, 22, 23, 24,
+        19, 14,  9,  4,  3,
+         8, 13, 18, 17, 16,
+        15, 10,  5,  6, 11,
+        12,  7,  2,  1,  0
+      ]
+    )
+  ) { return "positions[8] mismatch."; }
+
+  if (registry.indices.length != n_patterns) {
+    return "Wrong number of indices.";
+  }
+  if (
+    !same(
+      registry.indices[0],
+      [
+        14, 13, 12, 11, 10,
+        15, 16, 17,  8,  9,
+        20, 19, 18,  7,  6,
+        21, 22,  3,  4,  5,
+        24, 23,  2,  1,  0
+      ]
+    )
+  ) { return "indices[0] mismatch."; }
+  if (
+    !same(
+      registry.indices[1],
+      [
+        24, 21, 20, 15, 14,
+        23, 22, 19, 16, 13,
+         2,  3, 18, 17, 12,
+         1,  4,  7,  8, 11,
+         0,  5,  6,  9, 10
+      ]
+    )
+  ) { return "indices[1] mismatch."; }
+  if (
+    !same(
+      registry.indices[8],
+      [
+        24, 23, 22,  9,  8,
+        17, 18, 21, 10,  7,
+        16, 19, 20, 11,  6,
+        15, 14, 13, 12,  5,
+         0,  1,  2,  3,  4
+      ]
+    )
+  ) { return "indices[8] mismatch."; }
+
+  if (registry.orientations.length != n_patterns) {
+    return "Wrong number of oris.";
+  }
+  if (
+    !same(
+      registry.orientations[0],
+      [
+         2, 1, 1, 2, 3,
+         3, 2, 1, 2, 3,
+         2, 1, 1, 1, 1,
+         0, 3, 3, 0, 1,
+         1, 0, 3, 0, 1
+      ]
+    )
+  ) { return "orientations[0] mismatch."; }
+  if (
+    !same(
+      registry.orientations[1],
+      [
+         3, 2, 2, 3, 0,
+         0, 3, 2, 3, 0,
+         3, 2, 2, 2, 2,
+         1, 0, 0, 1, 2,
+         2, 1, 0, 1, 2
+      ]
+    )
+  ) { return "orientations[1] mismatch."; }
+  if (
+    !same(
+      registry.orientations[8],
+      [
+        3, 3, 3, 3, 3,
+        2, 2, 2, 2, 1,
+        0, 0, 0, 1, 1,
+        1, 2, 2, 3, 0,
+        3, 2, 2, 1, 1
+      ]
+    )
+  ) { return "orientations[8] mismatch."; }
+
+  if (registry.entrances.length != n_patterns) {
+    return "Wrong number of entrances.";
+  }
+  if (!same(registry.entrances[0], [2, 2])) { return "entrances[0] mismatch."; }
+  if (!same(registry.entrances[1], [3, 2])) { return "entrances[1] mismatch."; }
+  if (!same(registry.entrances[8], [3, 2])) { return "entrances[8] mismatch."; }
+
+  if (registry.exits.length != n_patterns) { return "Wrong number of exits."; }
+  if (!same(registry.exits[0], [3, 2])) { return "exits[0] mismatch."; }
+  if (!same(registry.exits[1], [0, 0])) { return "exits[1] mismatch."; }
+  if (!same(registry.exits[8], [0, 0])) { return "exits[8] mismatch."; }
+
+  if (Object.keys(registry.lookup).length != 8) {
+    return "Wrong number of lookup keys.";
+  }
+  if (!same(registry.lookup["2:2"]["3:2"], [0,11])) {
+    return "lookup['2:2']['3:2'] mismatch.";
+  }
+  if (!same(registry.lookup["3:2"]["0:0"], [1,8])) {
+    return "lookup['3:2']['0:0'] mismatch.";
+  }
+}
+
+var TESTS = [
+  [ "orientation_at", orientation_at([0, []]), undefined ],
+  [ "register_pattern", test_register_pattern(), undefined ],
   [
     "pattern_orientations",
     pattern_orientations(
       [
         24, 23, 22, 17, 18,
-        19, 14, 13, 8, 9,
-        4, 3, 2, 1, 0,
-        5, 6, 7, 12, 11,
+        19, 14, 13,  8,  9,
+         4,  3,  2,  1,  0,
+         5,  6,  7, 12, 11,
         10, 15, 16, 21, 20
       ],
       1
@@ -1511,8 +1731,8 @@ function same(v1, v2) {
 }
 
 let failed = false;
-for (let i in tests) {
-  let t = tests[i];
+for (let i in TESTS) {
+  let t = TESTS[i];
   let name = t[0];
   let v1 = t[1];
   let v2 = t[2];
