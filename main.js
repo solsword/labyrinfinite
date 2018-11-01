@@ -492,9 +492,15 @@ function draw_labyrinth(ctx) {
         ctx.moveTo(st_cc[0], st_cc[1]);
         ctx.lineTo(cc[0], cc[1]);
         // TODO: DEBUG
+        let height = fc[0];
+        let trace = fc[1];
+        let bilayer = lookup_bilayer([height, trace.slice(0, trace.length - 1)]);
         // TODO: HERE
-        ctx.strokeText(
-          "" + [x, y] + ":" + fc[1][fc[1].length - 1],
+        ctx.font = "14px Verdana";
+        ctx.fillStyle = "white";
+        ctx.fillText(
+          "" + PATTERNS.exits[bilayer.pattern],
+        //+ ">" + PATTERNS.exits[bilayer.pattern],
           cc[0],
           cc[1]
         );
@@ -1091,16 +1097,17 @@ function fill_patterns(bilayer) {
   // Given a bilayer that already knows its superpattern, iteratively fills in
   // any unconstrained sub-patterns that remain. Entrances and exits must be
   // filled in first!
-  let superpattern = PATTERNS.positions[bilayer.pattern];
+  let positions = PATTERNS.positions[bilayer.pattern];
+  let indices = PATTERNS.indices[bilayer.pattern];
   let seed = lfsr(bilayer.seed + 5786297813);
   // Doesn't touch entrance or exit
-  for (let i = 1; i < superpattern.length-1; ++i) {
-    let idx = superpattern[i];
-    let pc = idx__pc(idx);
-    if (bilayer.sub_patterns[idx] == undefined) {
+  for (let lidx = 1; lidx < positions.length-1; ++lidx) {
+    let pidx = positions[lidx];
+    let pc = idx__pc(pidx);
+    if (bilayer.sub_patterns[pidx] == undefined) {
       // get prev + next indices
-      let prev = superpattern[i-1];
-      let next = superpattern[i+1];
+      let prev = positions[lidx-1];
+      let next = positions[lidx+1];
 
       // compute entrance/exit orientations
       let prpc = idx__pc(prev);
@@ -1125,8 +1132,8 @@ function fill_patterns(bilayer) {
       let poss = pattern_possibilities([nori, pxs], [xori, nns]);
 
       // Pick a random pattern that fits:
-      bilayer.sub_patterns[idx] = choose_randomly(poss, seed);
-      if (bilayer.sub_patterns[idx] == undefined) {
+      bilayer.sub_patterns[pidx] = choose_randomly(poss, seed);
+      if (bilayer.sub_patterns[pidx] == undefined) {
         console.error("Pick fail.");
       }
       seed = lfsr(seed);
@@ -1135,11 +1142,12 @@ function fill_patterns(bilayer) {
 
   // TODO: DEBUG
   if (CHECK_GEN_INTEGRITY) {
-    for (let i = 0; i < superpattern.length; ++i) {
+    for (let i = 0; i < positions.length; ++i) {
       let lidx = PATTERNS.indices[bilayer.pattern][i];
       let ori = PATTERNS.orientations[bilayer.pattern][lidx];
       if (lidx > 0) {
-        let pr_pidx = superpattern[lidx - 1];
+        let pr_lidx = lidx - 1;
+        let pr_pidx = positions[pr_lidx];
         let vec = ori__vec(ori);
         let pc = idx__pc(i);
         let pr_pc = [pc[0] + vec[1], pc[1] + vec[0]];
@@ -1151,7 +1159,19 @@ function fill_patterns(bilayer) {
         if (PATTERNS.entrances[bilayer.sub_patterns[i]][0] != ori) {
           console.error("Subpatern entrance/ORI mismatch");
         }
-        if (lidx < superpattern.length - 1) {
+        let pr_ex = PATTERNS.exits[bilayer.sub_patterns[pr_pidx]];
+        let hr_en = PATTERNS.entrances[bilayer.sub_patterns[i]];
+        if (pr_ex[0] != opposite_side(hr_en[0])) {
+          console.error(
+            "Subpatern exit/entrance ori mismatch: " + pr_ex + ">" + hr_en
+          );
+        }
+        if (pr_ex[1] != hr_en[1]) {
+          console.error(
+            "Subpatern exit/entrance socket mismatch: " + pr_ex + ">" + hr_en
+          );
+        }
+        if (lidx < positions.length - 1) {
           let next_ori = PATTERNS.orientations[bilayer.pattern][lidx+1];
           let exit = PATTERNS.exits[bilayer.sub_patterns[i]][0];
           if (exit != opposite_side(next_ori)) {
