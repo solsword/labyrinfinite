@@ -8,6 +8,12 @@ Infinite 2-D labyrinth, with code for moving from point to point.
 
 Javascript
 
+## TODO
+
+- Debug core generation
+- Get trails moving
+- Add pathfinding code (simple)
+
 ## How to Run
 
 Open index.html.
