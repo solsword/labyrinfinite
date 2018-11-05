@@ -496,14 +496,17 @@ function draw_labyrinth(ctx) {
         let trace = fc[1];
         let bilayer = lookup_bilayer([height, trace.slice(0, trace.length - 1)]);
         // TODO: HERE
-        ctx.font = "14px Verdana";
+        /*
+        ctx.font = "15px Verdana";
         ctx.fillStyle = "white";
         ctx.fillText(
           "" + PATTERNS.exits[bilayer.pattern],
+          //"" + PATTERNS.entrances[bilayer.pattern],
         //+ ">" + PATTERNS.exits[bilayer.pattern],
           cc[0],
           cc[1]
         );
+        */
         ctx.stroke();
       }
     }
@@ -1099,6 +1102,7 @@ function fill_patterns(bilayer) {
   // filled in first!
   let positions = PATTERNS.positions[bilayer.pattern];
   let indices = PATTERNS.indices[bilayer.pattern];
+  let orientations = PATTERNS.orientations[bilayer.pattern];
   let seed = lfsr(bilayer.seed + 5786297813);
   // Doesn't touch entrance or exit
   for (let lidx = 1; lidx < positions.length-1; ++lidx) {
@@ -1111,15 +1115,15 @@ function fill_patterns(bilayer) {
 
       // compute entrance/exit orientations
       let prpc = idx__pc(prev);
-      let nori = nbs__ori(prpc, pc);
+      let nori = orientations[lidx];
       let nxpc = idx__pc(next);
-      let xori = opposite_side(nbs__ori(pc, nxpc));
+      let xori = opposite_side(orientations[lidx + 1]);
 
       // pick entrance/exit sockets
       let pxs = undefined; // previous exit socket
       let ppat = bilayer.sub_patterns[prev];
       if (ppat != undefined && ppat != WORKING_ON_IT) {
-        let pxs = PATTERNS.exits[ppat][1]; // just the socket
+        pxs = PATTERNS.exits[ppat][1]; // just the socket
       }
 
       let nns = undefined; // next entrance socket
@@ -1132,7 +1136,58 @@ function fill_patterns(bilayer) {
       let poss = pattern_possibilities([nori, pxs], [xori, nns]);
 
       // Pick a random pattern that fits:
-      bilayer.sub_patterns[pidx] = choose_randomly(poss, seed);
+      let pick = choose_randomly(poss, seed)
+
+      // Confirm connectivity:
+      if (CHECK_GEN_INTEGRITY) {
+        let n_new = PATTERNS.entrances[pick];
+        let x_new = PATTERNS.exits[pick];
+        if (
+          pxs == undefined
+       && (
+            ppat != undefined
+         && ppat != WORKING_ON_IT
+          )
+        ) {
+          console.error("Prev socket unavailable for defined pattern.");
+        }
+        if (
+          nns == undefined
+       && (
+            npat != undefined
+         && npat != WORKING_ON_IT
+          )
+        ) {
+          console.error("Next socket unavailable for defined pattern.");
+        }
+        if (n_new[0] != nori) {
+          console.error(
+            "Picked pattern has wrong entrance orientation: "
+          + n_new[0] + " != " + nori
+          );
+        }
+        if (x_new[0] != xori) {
+          console.error(
+            "Picked pattern has wrong exit orientation: "
+          + x_new[0] + " != " + xori
+          );
+        }
+        if (pxs != undefined && n_new[1] != pxs) {
+          console.error(
+            "Picked pattern has wrong entrance socket: "
+          + n_new[1] + " != " + pxs
+          );
+        }
+        if (nns != undefined && x_new[1] != nns) {
+          console.error(
+            "Picked pattern has wrong exit socket: "
+          + x_new[1] + " != " + nns
+          );
+        }
+      }
+
+      // Set sub-pattern and continue to the next one:
+      bilayer.sub_patterns[pidx] = pick;
       if (bilayer.sub_patterns[pidx] == undefined) {
         console.error("Pick fail.");
       }
