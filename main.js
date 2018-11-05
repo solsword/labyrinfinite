@@ -23,6 +23,9 @@ var GRID_COLOR = "white";
 // Size of each pattern
 var PATTERN_SIZE = 5;
 
+// Length of each path
+var PATH_LENGTH = (PATTERN_SIZE * PATTERN_SIZE);
+
 // The fractally increasing bilayer cache. Values in the process of being
 // generated are represented by WORKING_ON_IT, while never-requested values are
 // undefined.
@@ -39,6 +42,9 @@ var GEN_SPEED = 12;
 
 // Delay (ms) between generation ticks
 var GEN_DELAY = 5;
+
+// Delay (ms) between trails updates
+var TRAILS_DELAY = 150;
 
 // All pattern entrances have this orientation
 var PATTERN_ENTRANCE_ORIENTATION = 3;
@@ -387,17 +393,21 @@ function draw_frame(now) {
   FRAME %= MAX_FC;
 
   // TODO: let user lock-out autoadjust
-  adjust_scale(CTX);
+  adjust_viewport(CTX);
   draw_labyrinth(CTX);
+  draw_trails(CTX);
 }
 
 function interest_bb(ctx) {
+  // Computes the bounding box of the interesting region (the region containing
+  // all points of each trail) in world coordinates.
   result = {
     "left": ctx.destination[0],
     "right": ctx.destination[0],
     "top": ctx.destination[1],
     "bottom": ctx.destination[1]
   }
+
   for (let trail of ctx.trails) {
     for (let pos of trail.positions) {
       if (pos[0] < result.left) { result.left = pos[0]; }
@@ -409,15 +419,18 @@ function interest_bb(ctx) {
   return result;
 }
 
-function adjust_scale(ctx) {
+function adjust_viewport(ctx) {
   // Adjusts the scaling factor according to points of interest
   let ibb = interest_bb(ctx);
 
+  let ar = (ctx.cwidth / ctx.cheight);
   let ideal_scale = Math.max(
     MIN_SCALE,
-    ibb.right - ibb.left,
-    (ibb.bottom - ibb.top) * (ctx.cwidth / ctx.cheight)
-  );
+    2 * Math.abs(ibb.right),
+    2 * Math.abs(ibb.left),
+    2 * Math.abs(ibb.bottom) * ar,
+    2 * Math.abs(ibb.top) * ar
+  ) * 1.2;
 
   let scale_diff = ideal_scale - ctx.scale;
 
@@ -457,6 +470,7 @@ function draw_labyrinth(ctx) {
 
   // Set stroke color:
   ctx.strokeStyle = GRID_COLOR;
+  ctx.strokeWidth = 1;
 
   // Radius of each grid cell
   let cell_size = canvas_unit(ctx);
@@ -491,29 +505,31 @@ function draw_labyrinth(ctx) {
         ctx.beginPath();
         ctx.moveTo(st_cc[0], st_cc[1]);
         ctx.lineTo(cc[0], cc[1]);
-        // TODO: DEBUG
-        let height = fc[0];
-        let trace = fc[1];
-        let bilayer = lookup_bilayer([height, trace.slice(0, trace.length - 1)]);
-        // TODO: HERE
-        /*
-        ctx.font = "15px Verdana";
-        ctx.fillStyle = "white";
-        ctx.fillText(
-          "" + PATTERNS.exits[bilayer.pattern],
-          //"" + PATTERNS.entrances[bilayer.pattern],
-        //+ ">" + PATTERNS.exits[bilayer.pattern],
-          cc[0],
-          cc[1]
-        );
-        */
         ctx.stroke();
       }
     }
   }
 
-  // Done.
-  // TODO: Draw trails!
+  // Done drawing the labyrinth!
+}
+
+function draw_trails(ctx) {
+  // Draws a path for each trail, connecting the world coordinates of the trail
+  // together into a path.
+  ctx.strokeWidth = 2;
+  for (let tr of ctx.trails) {
+    ctx.strokeStyle = tr.color;
+    ctx.beginPath();
+    let first = tr.positions[0];
+    let cc = wc__cc(ctx, first);
+    ctx.moveTo(cc[0], cc[1]);
+    for (let i = 1; i < tr.positions.length; ++i) {
+      let pos = tr.positions[i];
+      cc = wc__cc(ctx, pos);
+      ctx.lineTo(cc[0], cc[1]);
+    }
+    ctx.stroke();
+  }
 }
 
 // ---------
@@ -709,10 +725,11 @@ function fc__edge_ac(fc, edge) {
 
 function extend_fc(fc) {
   // Extends the given fractal coordinates so that their height is increased by
-  // one while still denoting the same cell.
+  // one while still denoting the same cell. Returns a new set of coordinates
+  // without modifying the originals.
   let height = fc[0];
   let trace = fc[1];
-  let center = Math.floor((PATTERN_SIZE * PATTERN_SIZE) / 2);
+  let center = Math.floor(PATH_LENGTH / 2);
   return [
     height + 1,
     [ center ].concat(trace)
@@ -753,7 +770,7 @@ function edge_seed(fr_coords, edge) {
 function central_coords(height) {
   // Returns the fractal coordinates for the central bilayer just below the
   // given height (or just the central grid cell for height=0).
-  let center = Math.floor((PATTERN_SIZE * PATTERN_SIZE) / 2);
+  let center = Math.floor(PATH_LENGTH / 2);
   return [ height, [ center ] ];
 }
 
@@ -818,7 +835,6 @@ function gen_step() {
   window.setTimeout(gen_step, GEN_DELAY);
 }
 
-
 function gen_next() {
   // Generates the next bilayer in the generation queue, first generating a
   // single extra level of the bilayer cache if at least one more has been
@@ -857,6 +873,162 @@ function gen_next() {
 }
 
 
+// -----------
+// Trails Code
+// -----------
+
+function advance_trails(ctx) {
+  let dest = ctx.destination;
+  let dfc = ac__fc(dest); // fractal coords
+
+  for (tr of ctx.trails) {
+    let coords = tr.positions;
+    let head = coords[coords.length - 1];
+    let hfc = ac__fc(wc__gc(head));
+    let dir = direction_towards(hfc, dfc);
+    let nfc; // next fractal coords
+    if (dir == 1) { // forward
+      nfc = next_fc(hfc);
+    } else if (dir == -1) {
+      nfc = prev_fc(hfc);
+    } else {
+      // skip this trail, as it requires loading more info or is at the dest
+      continue;
+    }
+    let next = fc__ac(nfc);
+    coords.push(next);
+    coords.shift();
+  }
+
+  window.setTimeout(advance_trails, TRAILS_DELAY, ctx);
+}
+
+function next_fc(fc) {
+  // Computes the fractal coordinates of the grid cell after the given
+  // (fully-specified) fractal coordinates. Returns undefined if there's
+  // unloaded information that's needed.
+  let height = fc[0];
+  let trace = fc[1];
+  let bilayer = lookup_bilayer([height, trace.slice(0, trace.length - 1)]);
+
+  // Our trace and pattern index:
+  let pidx = trace[trace.length - 1];
+
+  if (bilayer == undefined) { // not available yet; has been requested
+    return undefined;
+  }
+
+  // Look up cell orientation:
+  let lidx = PATTERNS.indices[bilayer.pattern][pidx];
+  if (lidx == PATH_LENGTH - 1) {
+    let xori = PATTERNS.exits[bilayer.pattern][0];
+    let xvec = ori__vec(xori);
+    let ac = fc__ac(fc);
+    let next_ac = [
+      ac[0] + xvec[0],
+      ac[1] + xvec[1]
+    ];
+    return ac__fc(next_ac);
+  } else {
+    let new_trace = trace.slice(0, trace.length - 1);
+    new_trace.push(PATTERNS.positions[bilayer.pattern][lidx + 1]);
+    return [height, new_trace];
+  }
+}
+
+function prev_fc(fc) {
+  // Inverse of next_fc.
+  let height = fc[0];
+  let trace = fc[1];
+  let bilayer = lookup_bilayer([height, trace.slice(0, trace.length - 1)]);
+
+  // Our trace and pattern index:
+  let pidx = trace[trace.length - 1];
+
+  if (bilayer == undefined) { // not available yet; has been requested
+    return undefined;
+  }
+
+  // Look up cell orientation:
+  let lidx = PATTERNS.indices[bilayer.pattern][pidx];
+  if (lidx == 0) {
+    let nori = PATTERNS.entrances[bilayer.pattern][0];
+    let nvec = ori__vec(nori);
+    let ac = fc__ac(fc);
+    let prev_ac = [
+      ac[0] + nvec[0],
+      ac[1] + nvec[1]
+    ];
+    return ac__fc(prev_ac);
+  } else {
+    let new_trace = trace.slice(0, trace.length - 1);
+    new_trace.push(PATTERNS.positions[bilayer.pattern][lidx - 1]);
+    return [height, new_trace];
+  }
+}
+
+function direction_towards(from_fc, to_fc) {
+  // Computes the direction (forward or reverse) that's required to travel from
+  // the from_fc to the to_fc (both fractal coordinates). Returns -1 for
+  // reverse, 1 for forward, and 0 for identical coordinates. Returns undefined
+  // if the required information is not yet loaded.
+  // TODO: DEBUG HERE
+
+  // Extend the heights of each coordinate to match:
+  while (from_fc[0] < to_fc[0]) {
+    from_fc = extend_fc(from_fc);
+  }
+  while (from_fc[0] > to_fc[0]) {
+    to_fc = extend_fc(to_fc);
+  }
+
+  // Extend each one more time so they definitely coincide somewhere:
+  from_fc = extend_fc(from_fc);
+  to_fc = extend_fc(to_fc);
+
+  // Max-height:
+  let height = from_fc[0];
+
+  // Loop to find where they first differ and remember where they're last the
+  // same:
+  let co_fc = [height, []];
+  let i;
+  for (i = 0; i < from_fc[0]; ++i) {
+    if (from_fc[1][i] != to_fc[1][i]) {
+      break;
+    } // else extend shared trace:
+    co_fc[1].push(from_fc[1][i]);
+  }
+
+  // Check for coords that are the same:
+  if (co_fc[1].length >= height-1) {
+    return 0;
+  }
+
+  // Compute fractal coords where they last coincide:
+  let shared_bilayer = lookup_bilayer(co_fc);
+  if (shared_bilayer == undefined) {
+    return undefined;
+  }
+
+  // Using the trace entries where they differ, search through the pattern of
+  // the shared bilayer to see which one comes first:
+  let fr_pidx = from_fc[1][i];
+  let to_pidx = to_fc[1][i];
+
+  let positions = PATTERNS.positions[shared_bilayer.pattern];
+  for (let i = 0; i < PATH_LENGTH; ++i) {
+    if (positions[i] == fr_pidx) {
+      return 1; // from comes first, so go forward to get to to
+    } else {
+      return 0; // to comes first, so go backwards
+    }
+  }
+  console.error("Didn't find from OR to pattern indices in direction_towards!");
+  return undefined;
+}
+
+
 // --------------
 // Labyrinth Code
 // --------------
@@ -892,7 +1064,7 @@ function gen_central_bilayer(height, child_bilayer) {
     result.pattern = choose_randomly(poss, lfsr(seed + 61987291));
 
     // Embed our child pattern:
-    let center = Math.floor((PATTERN_SIZE * PATTERN_SIZE) / 2);
+    let center = Math.floor(PATH_LENGTH / 2);
     result.sub_patterns[center] = constraint;
 
     // Isolate that central pattern:
@@ -983,7 +1155,7 @@ function isolate_center_pattern(bilayer) {
     console.error("Undefined bilayer pattern in isolate_center_pattern.");
   }
   let seed = lfsr(bilayer.seed + 57239842);
-  let center = Math.floor((PATTERN_SIZE * PATTERN_SIZE) / 2);
+  let center = Math.floor(PATH_LENGTH / 2);
   let cidx = PATTERNS.indices[bilayer.pattern][center];
   let next = cidx + 1;
   let prev = cidx - 1;
@@ -1528,7 +1700,7 @@ function central_possibilities(nori, xori) {
   // Returns a list of pattern indices containing all possible patterns whose
   // central cell has the given entrance and exit orientations.
   let result = [];
-  let center = Math.floor((PATTERN_SIZE * PATTERN_SIZE) / 2);
+  let center = Math.floor(PATH_LENGTH / 2);
   for (let pidx = 0; pidx < PATTERNS.positions.length; ++pidx) {
     let cidx = PATTERNS.indices[pidx][center];
     let orientations = PATTERNS.orientations[pidx];
@@ -1917,9 +2089,9 @@ if (!failed) {
 
     // Set up trails:
     CTX.trails = [
-      { "seed": 19283801, "positions": [] },
-      { "seed": 74982018, "positions": [] },
-      { "seed": 57319834, "positions": [] },
+      { "seed": 19283801, "color": "red", "positions": [] },
+      { "seed": 74982018, "color": "blue", "positions": [] },
+      { "seed": 57319834, "color": "yellow", "positions": [] },
     ];
     for (let tr of CTX.trails) {
       for (let i = 0; i < TRAIL_LENGTH; ++i) {
@@ -1964,5 +2136,8 @@ if (!failed) {
 
     // Kick off generation subsystem
     gen_step();
+
+    // Kick of trails subsystem
+    advance_trails(CTX);
   };
 }
