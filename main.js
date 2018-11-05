@@ -1140,6 +1140,11 @@ function fill_patterns(bilayer) {
 
       // Confirm connectivity:
       if (CHECK_GEN_INTEGRITY) {
+        if (pick == undefined) {
+          console.error(
+            "Failed to pick a pattern for " + [nori, pxs] + " → " + [xori, nns]
+          );
+        }
         let n_new = PATTERNS.entrances[pick];
         let x_new = PATTERNS.exits[pick];
         if (
@@ -1188,9 +1193,6 @@ function fill_patterns(bilayer) {
 
       // Set sub-pattern and continue to the next one:
       bilayer.sub_patterns[pidx] = pick;
-      if (bilayer.sub_patterns[pidx] == undefined) {
-        console.error("Pick fail.");
-      }
       seed = lfsr(seed);
     }
   }
@@ -1485,11 +1487,17 @@ function pattern_possibilities(nc, xc) {
   if (n_specific) {
     exlu = lu[nid]; // exit lookup
     if (x_specific) { // specific entrance and exit
+      if (CHECK_GEN_INTEGRITY && exlu[xid] == undefined) {
+        console.error("Undefined specific entrance/exit pattern space.");
+      }
       result = exlu[xid].slice();
     } else { // specific entrance, nonspecific exit
       let matches = ec__eids(xc);
       for (let exid of matches) {
-        result = result.concat(exlu[exid]);
+        let joint = exlu[exid];
+        if (joint != undefined) {
+          result = result.concat(joint);
+        }
       }
     }
   } else { // nonspecific entrance
@@ -1497,7 +1505,10 @@ function pattern_possibilities(nc, xc) {
     for (let enid of n_matches) {
       let exlu = lu[enid]; // exit lookup
       if (x_specific) { // but specific exit
-        result = result.concat(exlu[xid]);
+        let joint = exlu[xid];
+        if (join != undefined) {
+          result = result.concat(joint);
+        }
       } else { // nonspecific exit too
         let x_matches = ec__eids(xc);
         for (let exid of x_matches) {
