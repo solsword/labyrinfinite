@@ -29,15 +29,15 @@ var PATTERN_SIZE = 5;
 // Length of each path
 var PATH_LENGTH = (PATTERN_SIZE * PATTERN_SIZE);
 
-// The fractally increasing bilayer cache. Values in the process of being
+// The fractally increasing bilayer caches. Values in the process of being
 // generated are represented by WORKING_ON_IT, while never-requested values are
 // undefined.
-var BILAYER_CACHE = [];
+var BILAYER_CACHES = {};
 
-// Queue for bilayers waiting to be generated. Each entry should be a set of
-// fractal coordinates. Coordinates in the queue which cannot be generated
-// because the superstructure they belong to hasn't been created yet will be
-// removed and discarded.
+// Queue for bilayers waiting to be generated. Each entry should be a pair
+// containing a seed value and a set of fractal coordinates. Coordinates in the
+// queue which cannot be generated because the superstructure they belong to
+// hasn't been created yet will be removed and discarded.
 var GEN_QUEUE = [];
 
 // Number of bilayers to generate per gen step.
@@ -397,7 +397,12 @@ function draw_frame(now) {
 
   // TODO: let user lock-out autoadjust
   adjust_viewport(CTX);
-  draw_labyrinth(CTX);
+
+  // Clear the canvas:
+  // TODO: Draw a background rectangle to get color here?
+  CTX.clearRect(0, 0, CTX.cwidth, CTX.cheight);
+
+  // draw_labyrinth(CTX);
   draw_destination(CTX);
   draw_trails(CTX);
 }
@@ -449,9 +454,12 @@ function orientation_at(fc) {
   // undefined if sufficient information has not yet been cached. Requests the
   // generation of new bilayers as appropriate because it uses lookup_bilayer.
 
-  let height = fc[0];
-  let trace = fc[1];
-  let bilayer = lookup_bilayer([height, trace.slice(0, trace.length - 1)]);
+  let seed = fc[0];
+  let height = fc[1];
+  let trace = fc[2];
+  let bilayer = lookup_bilayer(
+    [seed, height, trace.slice(0, trace.length - 1)]
+  );
 
   // Our trace and pattern index:
   let pidx = trace[trace.length - 1];
@@ -465,12 +473,8 @@ function orientation_at(fc) {
   return PATTERNS.orientations[bilayer.pattern][lidx];
 }
 
-function draw_labyrinth(ctx) {
+function draw_labyrinth(ctx, seed) {
   // Draws the visible portion of the labyrinth
-
-  // Clear the canvas:
-  // TODO: Draw a background rectangle to get color here?
-  ctx.clearRect(0, 0, ctx.cwidth, ctx.cheight);
 
   // Set stroke color:
   ctx.strokeStyle = GRID_COLOR;
@@ -487,7 +491,7 @@ function draw_labyrinth(ctx) {
       let cc = wc__cc(ctx, gc__wc([ x, y ]));
 
       // Draw a from-link for each cell
-      let fc = ac__fc([x, y]);
+      let fc = ac__fc(seed, [x, y]);
       let ori = orientation_at(fc);
 
       if (ori == undefined) { // not available yet; has been requested
@@ -515,7 +519,7 @@ function draw_labyrinth(ctx) {
       /*
       // TODO: DEBUG
       ctx.fillStyle = "white";
-      ctx.fillText("" + fc[1], cc[0], cc[1]);
+      ctx.fillText("" + fc[2], cc[0], cc[1]);
       // */
     }
   }
@@ -658,8 +662,9 @@ function flip_socket(socket) {
 // cells.
 
 function fc__ac(fc) {
-  let height = fc[0];
-  let trace = fc[1];
+  let seed = fc[0];
+  let height = fc[1];
+  let trace = fc[2];
 
   let cw = Math.pow(5, height); // width of a single cell
   let result = [0, 0]; // center coordinates at the top are always 0, 0.
@@ -677,11 +682,11 @@ function fc__ac(fc) {
   return result;
 }
 
-function ac__fc(ac) {
+function ac__fc(seed, ac) {
   let distance = Math.max(Math.abs(ac[0]), Math.abs(ac[1]));
   // special case for the origin:
   if (distance == 0) {
-    return [ 0, [ 12 ] ];
+    return [ seed, 0, [ 12 ] ];
   }
   // factor of two here because each n×n is centered at the origin, so only n/2
   // of it extends away from the origin.
@@ -720,7 +725,7 @@ function ac__fc(ac) {
     trace.push(pc__idx(pc));
   }
 
-  return [height, trace];
+  return [seed, height, trace];
 }
 
 function fc__edge_ac(fc, edge) {
@@ -729,8 +734,9 @@ function fc__edge_ac(fc, edge) {
   // a number from 0 to 3, denoting North, East, South, and West in that order.
   let ac = fc__ac(fc);
 
-  let height = fc[0];
-  let trace = fc[1];
+  let seed = fc[0];
+  let height = fc[1];
+  let trace = fc[2];
   let edge_height = height - trace.length
 
   let pw = Math.pow(5, edge_height+1); // width of a pattern
@@ -746,20 +752,23 @@ function extend_fc(fc) {
   // Extends the given fractal coordinates so that their height is increased by
   // one while still denoting the same cell. Returns a new set of coordinates
   // without modifying the originals.
-  let height = fc[0];
-  let trace = fc[1];
+  let seed = fc[0];
+  let height = fc[1];
+  let trace = fc[2];
   let center = Math.floor(PATH_LENGTH / 2);
   return [
+    seed,
     height + 1,
     [ center ].concat(trace)
   ];
 }
 
-function bilayer_seed(fr_coords) {
-  // Determines the seed for the given fractal coordinate location.
-  let height = fr_coords[0];
-  let trace = fr_coords[1];
-  let seed = 1700191983;
+function local_seed(fr_coords) {
+  // Determines the local bilayer seed for the given fractal coordinate
+  // location.
+  let seed = fr_coords[0];
+  let height = fr_coords[1];
+  let trace = fr_coords[2];
   for (let i = 0; i < height; ++i) {
     seed = lfsr(seed);
   }
@@ -775,9 +784,9 @@ function edge_seed(fr_coords, edge) {
   // Will return the same seed for both fractal + edge coordinates that
   // reference each edge (e.g., for a 5×5 pattern size, the West (#3) edge of
   // [0, [10]] and the East (#1) edge of [1, [11, 14]] are the same edge).
+  let seed = fr_coords[0];
   let ec = fc__edge_ac(fr_coords, edge);
-  let height = 1 + (fr_coords[0] - fr_coords[1].length);
-  let seed = 75928103;
+  let height = 1 + (fr_coords[1] - fr_coords[2].length);
   let mix = ((seed + (17*ec[0])) ^ ec[1]) + 3*height;
   let churn = mix % 4;
   for (let i = 0; i < churn; ++i) {
@@ -786,25 +795,29 @@ function edge_seed(fr_coords, edge) {
   return mix;
 }
 
-function central_coords(height) {
+function central_coords(seed, height) {
   // Returns the fractal coordinates for the central bilayer just below the
   // given height (or just the central grid cell for height=0).
   let center = Math.floor(PATH_LENGTH / 2);
-  return [ height, [ center ] ];
+  return [ seed, height, [ center ] ];
 }
 
 // ------------------
 // Caching and Lookup
 // ------------------
 
-function request_central_bilayer() {
-  if (BILAYER_CACHE[BILAYER_CACHE.length - 1] == WORKING_ON_IT) {
+function request_central_bilayer(seed) {
+  if (!BILAYER_CACHES.hasOwnProperty(seed)) {
+    BILAYER_CACHES[seed] = [];
+  }
+  let cache = BILAYER_CACHES[seed];
+  if (cache[cache.length - 1] == WORKING_ON_IT) {
     // We're already working on the next central bilayer
     return;
   }
-  let height = BILAYER_CACHE.length;
-  BILAYER_CACHE[height] = WORKING_ON_IT;
-  let fr_coords = central_coords(height);
+  let height = cache.length;
+  cache[height] = WORKING_ON_IT;
+  let fr_coords = central_coords(seed, height);
   GEN_QUEUE.push(fr_coords);
 }
 
@@ -812,14 +825,21 @@ function lookup_bilayer(fr_coords) {
   // Looks up the cached bilayer at the given fractal coordinates, or returns
   // undefined and adds an entry to the generation queue if that bilayer or one
   // of its parents is not yet cached.
-  let height = fr_coords[0];
-  let trace = fr_coords[1];
+  let seed = fr_coords[0];
+  let height = fr_coords[1];
+  let trace = fr_coords[2];
 
-  if (BILAYER_CACHE.length < height + 1) {
-    request_central_bilayer();
+  let cache = BILAYER_CACHES[seed];
+  if (cache == undefined) {
+    cache = [];
+    BILAYER_CACHES[seed] = cache;
+  }
+
+  if (cache.length < height + 1) {
+    request_central_bilayer(seed);
     return undefined;
   }
-  let ancestor = BILAYER_CACHE[height];
+  let ancestor = cache[height];
   if (ancestor == WORKING_ON_IT) {
     return undefined;
   }
@@ -832,7 +852,7 @@ function lookup_bilayer(fr_coords) {
     } else if (ancestor.children[idx] == undefined) {
       // add this to our generation queue
       ancestor.children[idx] = WORKING_ON_IT;
-      GEN_QUEUE.push([ height, sofar ]);
+      GEN_QUEUE.push([seed, height, sofar]);
       return undefined;
     } else {
       // inwards; onwards
@@ -858,36 +878,43 @@ function gen_next() {
   // Generates the next bilayer in the generation queue, first generating a
   // single extra level of the bilayer cache if at least one more has been
   // requested.
-  if (BILAYER_CACHE[BILAYER_CACHE.length - 1] == WORKING_ON_IT) {
-    let above;
-    if (BILAYER_CACHE.length > 1) {
-      above = gen_central_bilayer(
-        BILAYER_CACHE.length - 1,
-        BILAYER_CACHE[BILAYER_CACHE.length - 2]
-      ); // must embed this @ center
-    } else {
-      above = gen_central_bilayer(BILAYER_CACHE.length - 1, null);
-      // no constraint
-    }
-    BILAYER_CACHE[BILAYER_CACHE.length - 1] = above;
-  }
   let next = GEN_QUEUE.shift();
   if (next == undefined) {
     return; // nothing to do right now
   }
-  let height = next[0];
-  let trace = next[1];
+  let seed = next[0];
+  let cache = BILAYER_CACHES[seed];
+  if (cache == undefined) {
+    cache = [];
+    BILAYER_CACHES[seed] = cache;
+  }
+  if (cache[cache.length - 1] == WORKING_ON_IT) {
+    let above;
+    if (cache.length > 1) {
+      above = gen_central_bilayer(
+        seed,
+        cache.length - 1,
+        cache[cache.length - 2]
+      ); // must embed this @ center
+    } else {
+      above = gen_central_bilayer(seed, cache.length - 1, null);
+      // no constraint
+    }
+    cache[cache.length - 1] = above;
+  }
+  let height = next[1];
+  let trace = next[2];
   // Pop last entry in trace (points to bilayer we're being asked to generate)
   // and keep the rest to find our parent:
   let last = trace.pop();
-  let parent = lookup_bilayer([height, trace]);
+  let parent = lookup_bilayer([seed, height, trace]);
   if (
     parent != WORKING_ON_IT
  && parent != undefined
  && parent.children != null
  && parent.children[last] == WORKING_ON_IT
   ) {
-    parent.children[last] = gen_bilayer([height, trace], parent, last);
+    parent.children[last] = gen_bilayer([seed, height, trace], parent, last);
   }
 }
 
@@ -898,12 +925,13 @@ function gen_next() {
 
 function advance_trails(ctx) {
   let dest = ctx.destination;
-  let dfc = ac__fc(dest); // fractal coords
 
   for (tr of ctx.trails) {
+    let seed = tr.seed;
+    let dfc = ac__fc(seed, dest); // fractal coords
     let coords = tr.positions;
     let head = coords[coords.length - 1];
-    let hfc = ac__fc(wc__gc(head));
+    let hfc = ac__fc(seed, wc__gc(head));
     let dir = direction_towards(hfc, dfc);
     let nfc; // next fractal coords
     if (dir == 1) { // forward
@@ -912,9 +940,12 @@ function advance_trails(ctx) {
       nfc = prev_fc(hfc);
     } else {
       // skip this trail, as it requires loading more info or is at the dest
-      if (coords.length > 1) {
-        coords.shift();
-      }
+      if (coords.length > 1) { coords.shift(); }
+      continue;
+    }
+    if (nfc == undefined) {
+      // need more info for next/prev FC...
+      if (coords.length > 1) { coords.shift(); }
       continue;
     }
     let next = fc__ac(nfc);
@@ -931,9 +962,12 @@ function next_fc(fc) {
   // Computes the fractal coordinates of the grid cell after the given
   // (fully-specified) fractal coordinates. Returns undefined if there's
   // unloaded information that's needed.
-  let height = fc[0];
-  let trace = fc[1];
-  let bilayer = lookup_bilayer([height, trace.slice(0, trace.length - 1)]);
+  let seed = fc[0];
+  let height = fc[1];
+  let trace = fc[2];
+  let bilayer = lookup_bilayer(
+    [seed, height, trace.slice(0, trace.length - 1)]
+  );
 
   // Our trace and pattern index:
   let pidx = trace[trace.length - 1];
@@ -952,19 +986,22 @@ function next_fc(fc) {
       ac[0] + xvec[0],
       ac[1] + xvec[1]
     ];
-    return ac__fc(next_ac);
+    return ac__fc(seed, next_ac);
   } else {
     let new_trace = trace.slice(0, trace.length - 1);
     new_trace.push(PATTERNS.positions[bilayer.pattern][lidx + 1]);
-    return [height, new_trace];
+    return [seed, height, new_trace];
   }
 }
 
 function prev_fc(fc) {
   // Inverse of next_fc.
-  let height = fc[0];
-  let trace = fc[1];
-  let bilayer = lookup_bilayer([height, trace.slice(0, trace.length - 1)]);
+  let seed = fc[0];
+  let height = fc[1];
+  let trace = fc[2];
+  let bilayer = lookup_bilayer(
+    [seed, height, trace.slice(0, trace.length - 1)]
+  );
 
   // Our trace and pattern index:
   let pidx = trace[trace.length - 1];
@@ -983,11 +1020,11 @@ function prev_fc(fc) {
       ac[0] + nvec[0],
       ac[1] + nvec[1]
     ];
-    return ac__fc(prev_ac);
+    return ac__fc(seed, prev_ac);
   } else {
     let new_trace = trace.slice(0, trace.length - 1);
     new_trace.push(PATTERNS.positions[bilayer.pattern][lidx - 1]);
-    return [height, new_trace];
+    return [seed, height, new_trace];
   }
 }
 
@@ -995,13 +1032,17 @@ function common_parent(from_fc, to_fc) {
   // Finds the fractal coordinates of the closest parent bilayer which contains
   // both from_fc and to_fc. Returns a list containing those coordinates
   // followed by the pattern indices of the from and to coordinates within that
-  // bilayer.
+  // bilayer. Returns undefined if given coordinates with different seeds.
+  // Check seeds:
+  if (from_fc[0] != to_fc[0]) {
+    return undefined;
+  }
 
   // Extend the heights of each coordinate to match:
-  while (from_fc[0] < to_fc[0]) {
+  while (from_fc[1] < to_fc[1]) {
     from_fc = extend_fc(from_fc);
   }
-  while (to_fc[0] > from_fc[0]) {
+  while (to_fc[1] > from_fc[1]) {
     to_fc = extend_fc(to_fc);
   }
 
@@ -1009,20 +1050,23 @@ function common_parent(from_fc, to_fc) {
   from_fc = extend_fc(from_fc);
   to_fc = extend_fc(to_fc);
 
+  // Common seed:
+  let seed = from_fc[0];
+
   // Max-height:
-  let height = from_fc[0];
+  let height = from_fc[1];
 
   // Loop to find where they first differ and remember where they're last the
   // same:
-  let co_fc = [height, []];
+  let co_fc = [seed, height, []];
   let fr_pidx, to_pidx;
   for (let i = 0; i < height + 1; ++i) {
-    fr_pidx = from_fc[1][i];
-    to_pidx = to_fc[1][i];
+    fr_pidx = from_fc[2][i];
+    to_pidx = to_fc[2][i];
     if (fr_pidx != to_pidx) {
       break;
     } // else extend shared trace:
-    co_fc[1].push(fr_pidx);
+    co_fc[2].push(fr_pidx);
   }
 
   // Return the combined coordinates along with the positions (pattern indices)
@@ -1037,12 +1081,15 @@ function direction_towards(from_fc, to_fc) {
   // if the required information is not yet loaded.
 
   // Check for matching coordinates:
-  if (from_fc[0] == to_fc[0] && same(from_fc[1], to_fc[1])) {
+  if (same(from_fc, to_fc)) {
     return 0;
   }
 
   // Find common parent info:
   let joint = common_parent(from_fc, to_fc);
+  if (joint == undefined) {
+    return undefined;
+  }
   let co_fc = joint[0];
   let fr_pidx = joint[1];
   let to_pidx = joint[2];
@@ -1073,18 +1120,18 @@ function direction_towards(from_fc, to_fc) {
 // Labyrinth Code
 // --------------
 
-function gen_central_bilayer(height, child_bilayer) {
-  // Using the given height and child bilayer, generates and returns the
+function gen_central_bilayer(seed, height, child_bilayer) {
+  // Using the given seed, height, and child bilayer, generates and returns the
   // central bilayer, at the given height.
 
   // Compute the seed
-  let fc = central_coords(height);
-  let seed = bilayer_seed(fc);
+  let fc = central_coords(seed, height);
+  let l_seed = local_seed(fc);
 
   // Assemble empty result:
   result = {
    "coords": fc,
-   "seed": seed,
+   "seed": l_seed,
    "pattern": undefined,
    "sub_patterns": [],
    "children": []
@@ -1144,14 +1191,15 @@ function gen_bilayer(parent_fc, parent_bilayer, index) {
  // parent, its parent bilayer, and its pattern index within that parent.
 
  // Re-assemble full trace:
- let height = parent_fc[0];
- let ptrace = parent_fc[1];
+ let seed = parent_fc[0];
+ let height = parent_fc[1];
+ let ptrace = parent_fc[2];
  let trace = ptrace.slice();
  trace.push(index);
- let fc = [height, trace];
+ let fc = [seed, height, trace];
 
  // Compute the seed
- let seed = bilayer_seed(fc);
+ let l_seed = local_seed(fc);
 
  // Look up the pattern index in our parent:
  let pattern = parent_bilayer.sub_patterns[index];
@@ -1163,7 +1211,7 @@ function gen_bilayer(parent_fc, parent_bilayer, index) {
  // Create result
  result = {
    "coords": fc,
-   "seed": seed,
+   "seed": l_seed,
    "pattern": pattern,
    "sub_patterns": [],
    "children": []
@@ -1243,7 +1291,7 @@ function set_edge_patterns(bilayer) {
 
   let superpattern = PATTERNS.positions[bilayer.pattern];
   if (superpattern == undefined) {
-    console.log(bilayer);
+    console.error(bilayer);
   }
   let last = superpattern.length - 1;
   let nec = PATTERNS.entrances[bilayer.pattern];
@@ -1945,9 +1993,9 @@ function test_register_pattern() {
 }
 
 var TESTS = [
-  [ "edge_seed:0", edge_seed([1, [4]], 2), edge_seed([1, [9]], 0) ],
-  [ "edge_seed:1", edge_seed([1, [1]], 0), edge_seed([2, [7, 21]], 2) ],
-  [ "orientation_at", orientation_at([0, []]), undefined ],
+  [ "edge_seed:0", edge_seed([17, 1, [4]], 2), edge_seed([17, 1, [9]], 0) ],
+  [ "edge_seed:1", edge_seed([17, 1, [1]], 0), edge_seed([17, 2, [7, 21]], 2) ],
+  [ "orientation_at", orientation_at([17, 0, []]), undefined ],
   [ "register_pattern", test_register_pattern(), undefined ],
   [
     "pattern_orientations",
