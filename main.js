@@ -20,6 +20,9 @@ var ZOOM_SPEED = 0.6
 // The color of the grid
 var GRID_COLOR = "white";
 
+// The color of the destination
+var DEST_COLOR = "#55aaff";
+
 // Size of each pattern
 var PATTERN_SIZE = 5;
 
@@ -44,7 +47,7 @@ var GEN_SPEED = 12;
 var GEN_DELAY = 5;
 
 // Delay (ms) between trails updates
-var TRAILS_DELAY = 150;
+var TRAILS_DELAY = 20;
 
 // All pattern entrances have this orientation
 var PATTERN_ENTRANCE_ORIENTATION = 3;
@@ -191,8 +194,8 @@ function wc__gc(wc) {
 
 function gc__wc(gc) {
   return [
-    gc[0] + 0.5,
-    gc[1] + 0.5
+    gc[0],
+    gc[1]
   ];
 }
 
@@ -395,6 +398,7 @@ function draw_frame(now) {
   // TODO: let user lock-out autoadjust
   adjust_viewport(CTX);
   draw_labyrinth(CTX);
+  draw_destination(CTX);
   draw_trails(CTX);
 }
 
@@ -506,11 +510,26 @@ function draw_labyrinth(ctx) {
         ctx.moveTo(st_cc[0], st_cc[1]);
         ctx.lineTo(cc[0], cc[1]);
         ctx.stroke();
+
       }
+      /*
+      // TODO: DEBUG
+      ctx.fillStyle = "white";
+      ctx.fillText("" + fc[1], cc[0], cc[1]);
+      // */
     }
   }
 
   // Done drawing the labyrinth!
+}
+
+function draw_destination(ctx) {
+  ctx.strokeWidth = 2;
+  ctx.strokeStyle = DEST_COLOR;
+  ctx.beginPath();
+  let cc = wc__cc(ctx, ctx.destination);
+  ctx.arc(cc[0], cc[1], canvas_unit(ctx)*0.4, 0, 2*Math.PI);
+  ctx.stroke();
 }
 
 function draw_trails(ctx) {
@@ -893,11 +912,16 @@ function advance_trails(ctx) {
       nfc = prev_fc(hfc);
     } else {
       // skip this trail, as it requires loading more info or is at the dest
+      if (coords.length > 1) {
+        coords.shift();
+      }
       continue;
     }
     let next = fc__ac(nfc);
     coords.push(next);
-    coords.shift();
+    if (coords.length > TRAIL_LENGTH) {
+      coords.shift();
+    }
   }
 
   window.setTimeout(advance_trails, TRAILS_DELAY, ctx);
@@ -967,18 +991,17 @@ function prev_fc(fc) {
   }
 }
 
-function direction_towards(from_fc, to_fc) {
-  // Computes the direction (forward or reverse) that's required to travel from
-  // the from_fc to the to_fc (both fractal coordinates). Returns -1 for
-  // reverse, 1 for forward, and 0 for identical coordinates. Returns undefined
-  // if the required information is not yet loaded.
-  // TODO: DEBUG HERE
+function common_parent(from_fc, to_fc) {
+  // Finds the fractal coordinates of the closest parent bilayer which contains
+  // both from_fc and to_fc. Returns a list containing those coordinates
+  // followed by the pattern indices of the from and to coordinates within that
+  // bilayer.
 
   // Extend the heights of each coordinate to match:
   while (from_fc[0] < to_fc[0]) {
     from_fc = extend_fc(from_fc);
   }
-  while (from_fc[0] > to_fc[0]) {
+  while (to_fc[0] > from_fc[0]) {
     to_fc = extend_fc(to_fc);
   }
 
@@ -992,18 +1015,37 @@ function direction_towards(from_fc, to_fc) {
   // Loop to find where they first differ and remember where they're last the
   // same:
   let co_fc = [height, []];
-  let i;
-  for (i = 0; i < from_fc[0]; ++i) {
-    if (from_fc[1][i] != to_fc[1][i]) {
+  let fr_pidx, to_pidx;
+  for (let i = 0; i < height + 1; ++i) {
+    fr_pidx = from_fc[1][i];
+    to_pidx = to_fc[1][i];
+    if (fr_pidx != to_pidx) {
       break;
     } // else extend shared trace:
-    co_fc[1].push(from_fc[1][i]);
+    co_fc[1].push(fr_pidx);
   }
 
-  // Check for coords that are the same:
-  if (co_fc[1].length >= height-1) {
+  // Return the combined coordinates along with the positions (pattern indices)
+  // of the start and end coordinates within that bilayer.
+  return [co_fc, fr_pidx, to_pidx];
+}
+
+function direction_towards(from_fc, to_fc) {
+  // Computes the direction (forward or reverse) that's required to travel from
+  // the from_fc to the to_fc (both fractal coordinates). Returns -1 for
+  // reverse, 1 for forward, and 0 for identical coordinates. Returns undefined
+  // if the required information is not yet loaded.
+
+  // Check for matching coordinates:
+  if (from_fc[0] == to_fc[0] && same(from_fc[1], to_fc[1])) {
     return 0;
   }
+
+  // Find common parent info:
+  let joint = common_parent(from_fc, to_fc);
+  let co_fc = joint[0];
+  let fr_pidx = joint[1];
+  let to_pidx = joint[2];
 
   // Compute fractal coords where they last coincide:
   let shared_bilayer = lookup_bilayer(co_fc);
@@ -1011,17 +1053,15 @@ function direction_towards(from_fc, to_fc) {
     return undefined;
   }
 
-  // Using the trace entries where they differ, search through the pattern of
-  // the shared bilayer to see which one comes first:
-  let fr_pidx = from_fc[1][i];
-  let to_pidx = to_fc[1][i];
-
+  if (fr_pidx == to_pidx) {
+    console.error("IDENTICAL fr/to PIDXs: " + fr_pidx);
+  }
   let positions = PATTERNS.positions[shared_bilayer.pattern];
   for (let i = 0; i < PATH_LENGTH; ++i) {
     if (positions[i] == fr_pidx) {
       return 1; // from comes first, so go forward to get to to
-    } else {
-      return 0; // to comes first, so go backwards
+    } else if (positions[i] == to_pidx) {
+      return -1; // to comes first, so go backwards
     }
   }
   console.error("Didn't find from OR to pattern indices in direction_towards!");
@@ -1066,6 +1106,7 @@ function gen_central_bilayer(height, child_bilayer) {
     // Embed our child pattern:
     let center = Math.floor(PATH_LENGTH / 2);
     result.sub_patterns[center] = constraint;
+    result.children[center] = child_bilayer;
 
     // Isolate that central pattern:
     isolate_center_pattern(result);
@@ -1115,6 +1156,7 @@ function gen_bilayer(parent_fc, parent_bilayer, index) {
  // Look up the pattern index in our parent:
  let pattern = parent_bilayer.sub_patterns[index];
  if (pattern == undefined) {
+   console.error("Missing sub_pattern in gen_ilayer.");
    console.log(parent_bilayer);
  }
  
@@ -1169,14 +1211,6 @@ function isolate_center_pattern(bilayer) {
   // That pattern's entrance and exit:
   let nec = PATTERNS.entrances[constraint];
   let xec = PATTERNS.exits[constraint];
-  // TODO: DEBUG
-  /*
-  let c_nori = PATTERNS.orientations[bilayer.pattern][cidx];
-  let c_xori = opposite_side(PATTERNS.orientations[bilayer.pattern][next]);
-  if (c_nori != nec[0] || c_xori != xec[0]) {
-    console.error("Super/sub-pattern orientation mismatch.");
-  }
-  */
 
   // The partner edge coordinates for those:
   let pr_xec = [ opposite_side(nec[0]), nec[1] ];
@@ -1369,7 +1403,6 @@ function fill_patterns(bilayer) {
     }
   }
 
-  // TODO: DEBUG
   if (CHECK_GEN_INTEGRITY) {
     for (let i = 0; i < positions.length; ++i) {
       let lidx = PATTERNS.indices[bilayer.pattern][i];
