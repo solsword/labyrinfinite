@@ -46,6 +46,9 @@ var GEN_SPEED = 12;
 // Delay (ms) between generation ticks
 var GEN_DELAY = 5;
 
+// Delay (ms) between test attempts
+var TEST_DELAY = 50;
+
 // Delay (ms) between trails updates
 var TRAILS_DELAY = 20;
 
@@ -380,7 +383,11 @@ function ori__vec(ori) {
 
 function draw_frame(now) {
   // Draws a single frame & loops itself
-  window.requestAnimationFrame(draw_frame);
+  if (!FAILED) {
+    window.requestAnimationFrame(draw_frame);
+  } else {
+    console.error("Draw loop aborted due to test failure.");
+  }
 
   // Measure time
   let ms_time = window.performance.now();
@@ -403,8 +410,8 @@ function draw_frame(now) {
   CTX.clearRect(0, 0, CTX.cwidth, CTX.cheight);
 
   // TODO: DEBUG
-  draw_labyrinth(CTX, 5719283);
-  draw_labyrinth(CTX, 6274019);
+  //draw_labyrinth(CTX, 5719283);
+  //draw_labyrinth(CTX, 6274019);
   draw_destination(CTX);
   draw_trails(CTX);
 }
@@ -765,6 +772,22 @@ function extend_fc(fc) {
   ];
 }
 
+function normalize_fc(fc) {
+  // Retracts the given fractal coordinates as much as possible, getting rid of
+  // unnecessary height and central indices. The result still refers to the
+  // same cell. Returns a new set of coordinates without modifying the
+  // originals.
+  let seed = fc[0];
+  let height = fc[1];
+  let trace = fc[2].slice();
+  let center = Math.floor(PATH_LENGTH / 2);
+  while (trace[0] == center) {
+    height -= 1;
+    trace.shift();
+  }
+  return [seed, height, trace];
+}
+
 function local_seed(fr_coords) {
   // Determines the local bilayer seed for the given fractal coordinate
   // location.
@@ -956,8 +979,14 @@ function advance_trails(ctx) {
       coords.shift();
     }
     if (same(coords[0], coords[2])) { // we might be dithering
-      // TODO: DEBUG HERE!
-      console.log([coords[0], coords[1]]);
+      let bl = lookup_bilayer(
+        [
+          hfc[0],
+          hfc[1],
+          hfc[2].slice(0, hfc[2].length-1)
+        ]
+      );
+      console.error([hfc[0], hfc[2], PATTERNS.positions[bl.pattern]]);
     }
   }
 
@@ -1048,7 +1077,7 @@ function common_parent(from_fc, to_fc) {
   while (from_fc[1] < to_fc[1]) {
     from_fc = extend_fc(from_fc);
   }
-  while (to_fc[1] > from_fc[1]) {
+  while (to_fc[1] < from_fc[1]) {
     to_fc = extend_fc(to_fc);
   }
 
@@ -1170,6 +1199,9 @@ function gen_central_bilayer(seed, height, child_bilayer) {
     // Pick random entrance/exit orientations:
     let nori = randint(4, lfsr(seed + 75981238));
     let xori = randint(4, lfsr(seed + 3127948));
+    // TODO: Check variety here?!?
+    // TODO DEBUG HERE
+    //console.log([nori, xori]);
 
     // Pattern chosen so that its entrance and exit will have the appropriate
     // edge sockets for their neighbors.
@@ -1203,9 +1235,10 @@ function gen_bilayer(parent_fc, parent_bilayer, index) {
  let trace = ptrace.slice();
  trace.push(index);
  let fc = [seed, height, trace];
+ let nr_fc = normalize_fc(fc);
 
  // Compute the seed
- let l_seed = local_seed(fc);
+ let l_seed = local_seed(nr_fc);
 
  // Look up the pattern index in our parent:
  let pattern = parent_bilayer.sub_patterns[index];
@@ -1216,7 +1249,7 @@ function gen_bilayer(parent_fc, parent_bilayer, index) {
  
  // Create result
  result = {
-   "coords": fc,
+   "coords": nr_fc,
    "seed": l_seed,
    "pattern": pattern,
    "sub_patterns": [],
@@ -2120,6 +2153,24 @@ var TESTS = [
        22, 23, 18, 19, 24
     ],
   ],
+  [
+    "common_parent:0",
+    common_parent([17, 0, [13]], [17, 1, [13, 2]]),
+    [ [17, 2, [12]], 12, 13 ]
+  ],
+  [
+    "common_parent:1",
+    common_parent([17, 1, [13, 2]], [17, 0, [13]]),
+    [ [17, 2, [12]], 13, 12 ]
+  ],
+];
+
+LATE_TESTS = [
+  [
+    "direction_towards:0",
+    [direction_towards, [[37198417, 1, [13, 2]], [37198417, 0, [13]]]],
+    [direction_towards, [[37198417, 1, [8, 22]], [37198417, 0, [13]]]]
+  ]
 ];
 
 function same(v1, v2) {
@@ -2139,7 +2190,41 @@ function same(v1, v2) {
   }
 }
 
-let failed = false;
+function keep_testing(tests) {
+  let unresolved = [];
+  for (let i in tests) {
+    let t = tests[i];
+    let name = t[0];
+    let fv1 = t[1];
+    let f1 = fv1[0];
+    let a1 = fv1[1];
+    let fv2 = t[2];
+    let f2 = fv2[0];
+    let a2 = fv2[1];
+
+    let v1 = f1(...a1);
+    let v2 = f2(...a2);
+
+    if (v1 == undefined || v2 == undefined) {
+      unresolved.push(t);
+      continue;
+    } else if (!same(v1, v2)) {
+      console.error("Late Test '" + name + "' (#" + i + ") failed.");
+      console.log("Expected:");
+      console.log(v2);
+      console.log("Got:");
+      console.log(v1);
+      FAILED = true;
+    }
+  }
+  if (unresolved.length > 0) {
+    window.setTimeout(keep_testing, TEST_DELAY, unresolved);
+  } else {
+    console.log("Late tests all passed.");
+  }
+}
+
+var FAILED = false;
 for (let i in TESTS) {
   let t = TESTS[i];
   let name = t[0];
@@ -2151,16 +2236,18 @@ for (let i in TESTS) {
     console.log(v2);
     console.log("Got:");
     console.log(v1);
-    failed = true;
+    FAILED = true;
   }
 }
+
+keep_testing(LATE_TESTS)
 
 // --------------------
 // Onload Functionality
 // --------------------
 
 // Run when the document is loaded unless a test failed:
-if (!failed) {
+if (!FAILED) {
   window.onload = function () {
     // Start pattern-loading process immediately
     load_patterns();
