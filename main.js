@@ -21,7 +21,7 @@ var ZOOM_SPEED = 0.6
 var GRID_COLOR = "white";
 
 // The color of the destination
-var DEST_COLOR = "#55aaff";
+var DEST_COLOR = "#ffffff";
 
 // Size of each pattern
 var PATTERN_SIZE = 5;
@@ -50,7 +50,7 @@ var GEN_DELAY = 5;
 var TEST_DELAY = 50;
 
 // Delay (ms) between trails updates
-var TRAILS_DELAY = 20;
+var TRAILS_DELAY = 3; // 20;
 
 // All pattern entrances have this orientation
 var PATTERN_ENTRANCE_ORIENTATION = 3;
@@ -66,7 +66,6 @@ var FRAME = 0;
 
 // When the frame counter resets:
 var MAX_FC = 1000;
-// var MAX_FC = 10000000;
 
 // Object placeholder for things we're in the process of generating:
 var WORKING_ON_IT = {};
@@ -74,6 +73,9 @@ var WORKING_ON_IT = {};
 // Whether to double-check generation integrity or to assume things work
 // correctly.
 var CHECK_GEN_INTEGRITY = true;
+
+// Keep track of whether our destination changed:
+var DEST_CHANGED = false;
 
 // -------------------------
 // Updaters & Event Handlers
@@ -87,6 +89,7 @@ function set_scale(context, scale_factor) {
 function set_destination(context, grid_coords) {
   // Sets the current destination.
   context.destination = grid_coords;
+  DEST_CHANGED = true;
 }
 
 function update_canvas_size(canvas, context) {
@@ -402,7 +405,7 @@ function draw_frame(now) {
   FRAME += 1;
   FRAME %= MAX_FC;
 
-  // TODO: let user lock-out autoadjust
+  // TODO: let user lock-out autoadjust?
   adjust_viewport(CTX);
 
   // Clear the canvas:
@@ -410,8 +413,8 @@ function draw_frame(now) {
   CTX.clearRect(0, 0, CTX.cwidth, CTX.cheight);
 
   // TODO: DEBUG
-  //draw_labyrinth(CTX, 5719283);
-  //draw_labyrinth(CTX, 6274019);
+  // draw_labyrinth(CTX, 5719283);
+  // draw_labyrinth(CTX, 6274019);
   draw_destination(CTX);
   draw_trails(CTX);
 }
@@ -487,7 +490,7 @@ function draw_labyrinth(ctx, seed) {
 
   // Set stroke color:
   ctx.strokeStyle = GRID_COLOR;
-  ctx.strokeWidth = 1;
+  ctx.lineWidth = 2;
 
   // Radius of each grid cell
   let cell_size = canvas_unit(ctx);
@@ -537,36 +540,79 @@ function draw_labyrinth(ctx, seed) {
 }
 
 function draw_destination(ctx) {
-  ctx.strokeWidth = 2;
+  ctx.lineWidth = 4;
   ctx.strokeStyle = DEST_COLOR;
+  ctx.fillStyle = DEST_COLOR;
   ctx.beginPath();
   let cc = wc__cc(ctx, ctx.destination);
-  ctx.arc(cc[0], cc[1], canvas_unit(ctx)*0.4, 0, 2*Math.PI);
+  ctx.arc(cc[0], cc[1], canvas_unit(ctx)*0.2, 0, 2*Math.PI);
   ctx.stroke();
+  ctx.globalAlpha = 0.25;
+  ctx.fill();
+  ctx.globalAlpha = 1.0;
 }
 
 function draw_trails(ctx) {
   // Draws a path for each trail, connecting the world coordinates of the trail
   // together into a path.
-  ctx.strokeWidth = 2;
+  ctx.lineWidth = 3;
+  let unit = canvas_unit(ctx);
   for (let tr of ctx.trails) {
-    ctx.strokeStyle = tr.color;
-    ctx.beginPath();
+
     let first = tr.positions[0];
     let cc = wc__cc(ctx, first);
-    ctx.moveTo(cc[0], cc[1]);
     for (let i = 1; i < tr.positions.length; ++i) {
+      ctx.beginPath();
+      ctx.moveTo(cc[0], cc[1]);
       let pos = tr.positions[i];
       cc = wc__cc(ctx, pos);
       ctx.lineTo(cc[0], cc[1]);
+      ctx.strokeStyle = tr.color;
+      let interp = (i / tr.positions.length);
+      ctx.globalAlpha = Math.pow(interp, 1.65);
+      ctx.stroke();
     }
-    ctx.stroke();
   }
+  ctx.globalAlpha = 1.0;
 }
 
 // ---------
 // Misc Code
 // ---------
+
+function blend_color(c1, c2, r) {
+  // Blends 1-r of the first color with r of the second color. Does silly RGB
+  // interpolation.
+  c1 = c1.slice(1);
+  c2 = c2.slice(1);
+
+  let r1 = parseInt(c1.slice(0, 2), 16);
+  let g1 = parseInt(c1.slice(2, 4), 16);
+  let b1 = parseInt(c1.slice(4, 6), 16);
+  a1 = 255;
+  if (c1.length > 6) { let a1 = parseInt(c1.slice(6, 8)); }
+
+  let r2 = parseInt(c2.slice(0, 2), 16);
+  let g2 = parseInt(c2.slice(2, 4), 16);
+  let b2 = parseInt(c2.slice(4, 6), 16);
+  a2 = 255;
+  if (c2.length > 6) { let a2 = parseInt(c2.slice(6, 8)); }
+
+  let new_r = Math.floor(r1 * (1 - r) + r2 * r);
+  let new_g = Math.floor(g1 * (1 - r) + g2 * r);
+  let new_b = Math.floor(b1 * (1 - r) + b2 * r);
+  let new_a = Math.floor(a1 * (1 - r) + a2 * r);
+
+  let hr = new_r.toString(16);
+  if (hr.length == 1) { hr = "0" + hr; }
+  let hg = new_g.toString(16);
+  if (hg.length == 1) { hg = "0" + hg; }
+  let hb = new_b.toString(16);
+  if (hb.length == 1) { hb = "0" + hb; }
+  let ha = new_a.toString(16);
+  if (ha.length == 1) { ha = "0" + ha; }
+  return "#" + hr + hg + hb + ha;
+}
 
 function lfsr(x) {
   // Implements a max-cycle-length 32-bit linear-feedback-shift-register.
@@ -651,6 +697,16 @@ function flip_socket(socket) {
 // Fractal Coordinates
 // -------------------
 
+function origin_for(seed) {
+  // Returns the origin coordinates for the given seed. These will always be
+  // within PATTERN_SIZE units of the origin.
+  let r = lfsr(seed + 17371947103);
+  let x = r % PATTERN_SIZE;
+  r = lfsr(r);
+  let y = r % PATTERN_SIZE;
+  return [ x, y ];
+}
+
 
 // Fractal <-> absolute coordinates
 //
@@ -688,11 +744,17 @@ function fc__ac(fc) {
     cw = cw/5;
   }
 
-  return result;
+  let origin = origin_for(seed);
+  return [
+    result[0] + origin[0],
+    result[1] + origin[1]
+  ];
 }
 
 function ac__fc(seed, ac) {
-  let distance = Math.max(Math.abs(ac[0]), Math.abs(ac[1]));
+  let origin = origin_for(seed);
+  let off_ac = [ ac[0] - origin[0], ac[1] - origin[1] ];
+  let distance = Math.max(Math.abs(off_ac[0]), Math.abs(off_ac[1]));
   // special case for the origin:
   if (distance == 0) {
     return [ seed, 0, [ 12 ] ];
@@ -704,8 +766,8 @@ function ac__fc(seed, ac) {
 
   let trace = [];
   let rc = [
-    ac[0] + cw * PATTERN_SIZE/2,
-    ac[1] + cw * PATTERN_SIZE/2
+    off_ac[0] + cw * PATTERN_SIZE/2,
+    off_ac[1] + cw * PATTERN_SIZE/2
   ]; // relative coordinates
 
   pc = [ // compute first local pattern coordinates
@@ -751,9 +813,12 @@ function fc__edge_ac(fc, edge) {
   let pw = Math.pow(5, edge_height+1); // width of a pattern
 
   let ev = ori__vec(edge); // edge vector
+
+  let origin = origin_for(seed);
+  let off_ac = [ ac[0] + origin[0], ac[1] + origin[1] ];
   return [
-    ac[0] + ev[0] * pw/2,
-    ac[1] + ev[1] * pw/2
+    off_ac[0] + ev[0] * pw/2,
+    off_ac[1] + ev[1] * pw/2
   ];
 }
 
@@ -769,6 +834,21 @@ function extend_fc(fc) {
     seed,
     height + 1,
     [ center ].concat(trace)
+  ];
+}
+
+function parent_of(fc) {
+  // Returns the fractal coordinates of the parent of the given cell.
+  let seed = fc[0];
+  let height = fc[1];
+  let trace = fc[2];
+  if (trace.length <= 1) {
+    return parent_of(extend_fc(fc));
+  }
+  return [
+    seed,
+    height,
+    trace.slice(0, trace.length - 1)
   ];
 }
 
@@ -957,20 +1037,23 @@ function advance_trails(ctx) {
     let coords = tr.positions;
     let head = coords[coords.length - 1];
     let hfc = ac__fc(seed, wc__gc(head));
-    let dir = direction_towards(hfc, dfc);
+    //let dir = direction_towards(hfc, dfc);
+    let dir = distance_to(hfc, dfc);
+    // TODO: DEBUG HERE!!!
+    console.log(dir);
     let nfc; // next fractal coords
-    if (dir == 1) { // forward
+    if (dir > 0) { // forward
       nfc = next_fc(hfc);
-    } else if (dir == -1) {
+    } else if (dir < 0) {
       nfc = prev_fc(hfc);
     } else {
       // skip this trail, as it requires loading more info or is at the dest
-      if (coords.length > 1) { coords.shift(); }
+      //if (coords.length > 1) { coords.shift(); }
       continue;
     }
     if (nfc == undefined) {
       // need more info for next/prev FC...
-      if (coords.length > 1) { coords.shift(); }
+      //if (coords.length > 1) { coords.shift(); }
       continue;
     }
     let next = fc__ac(nfc);
@@ -978,7 +1061,14 @@ function advance_trails(ctx) {
     if (coords.length > TRAIL_LENGTH) {
       coords.shift();
     }
-    if (same(coords[0], coords[2])) { // we might be dithering
+    /*
+     * TODO: Not sure why this gives false alarms...
+    if (
+      !DEST_CHANGED
+   && same(coords[coords.length - 1], coords[coords.length - 3])
+    ) { // we might be dithering
+      console.error("Possible dithering...");
+      console.log(coords.slice());
       let bl = lookup_bilayer(
         [
           hfc[0],
@@ -986,11 +1076,22 @@ function advance_trails(ctx) {
           hfc[2].slice(0, hfc[2].length-1)
         ]
       );
-      console.error([hfc[0], hfc[2], PATTERNS.positions[bl.pattern]]);
+      console.log([hfc[0], hfc[2], PATTERNS.positions[bl.pattern]]);
+      //FAILED = true;
+      //break;
     }
+    */
   }
 
-  window.setTimeout(advance_trails, TRAILS_DELAY, ctx);
+  // Reset
+  DEST_CHANGED = false;
+
+  // Requeue
+  if (!FAILED) {
+    window.setTimeout(advance_trails, TRAILS_DELAY, ctx);
+  } else {
+    console.error("Stopped trails due to test failure.");
+  }
 }
 
 function next_fc(fc) {
@@ -1000,9 +1101,7 @@ function next_fc(fc) {
   let seed = fc[0];
   let height = fc[1];
   let trace = fc[2];
-  let bilayer = lookup_bilayer(
-    [seed, height, trace.slice(0, trace.length - 1)]
-  );
+  let bilayer = lookup_bilayer(parent_of(fc));
 
   // Our trace and pattern index:
   let pidx = trace[trace.length - 1];
@@ -1034,9 +1133,7 @@ function prev_fc(fc) {
   let seed = fc[0];
   let height = fc[1];
   let trace = fc[2];
-  let bilayer = lookup_bilayer(
-    [seed, height, trace.slice(0, trace.length - 1)]
-  );
+  let bilayer = lookup_bilayer(parent_of(fc));
 
   // Our trace and pattern index:
   let pidx = trace[trace.length - 1];
@@ -1138,16 +1235,105 @@ function direction_towards(from_fc, to_fc) {
   if (fr_pidx == to_pidx) {
     console.error("IDENTICAL fr/to PIDXs: " + fr_pidx);
   }
-  let positions = PATTERNS.positions[shared_bilayer.pattern];
-  for (let i = 0; i < PATH_LENGTH; ++i) {
-    if (positions[i] == fr_pidx) {
-      return 1; // from comes first, so go forward to get to to
-    } else if (positions[i] == to_pidx) {
-      return -1; // to comes first, so go backwards
-    }
+  let indices = PATTERNS.indices[shared_bilayer.pattern];
+  if (indices[fr_pidx] < indices[to_pidx]) {
+    return 1;
+  } else {
+    return -1;
   }
   console.error("Didn't find from OR to pattern indices in direction_towards!");
   return undefined;
+}
+
+function distance_to(from_fc, to_fc) {
+  // Like direction_towards, but returns a (positive or negative) distance
+  // value instead of just a direction value. Returns undefined if the required
+  // information is not yet loaded.
+
+  // Check for matching coordinates:
+  if (same(from_fc, to_fc)) {
+    return 0;
+  }
+
+  // Find common parent info:
+  let joint = common_parent(from_fc, to_fc);
+  if (joint == undefined) {
+    return undefined;
+  }
+
+  let co_fc = joint[0];
+
+  let fr_pidx = joint[1];
+  let fr_sub_trace = co_fc[2].slice();
+  fr_sub_trace.push(fr_pidx);
+
+  let to_pidx = joint[2];
+  let to_sub_trace = co_fc[2].slice();
+  to_sub_trace.push(to_pidx);
+
+  // Compute fractal coords where they last coincide:
+  let shared_bilayer = lookup_bilayer(co_fc);
+  if (shared_bilayer == undefined) {
+    return undefined;
+  }
+
+  if (fr_pidx == to_pidx) {
+    console.error("IDENTICAL fr/to PIDXs: " + fr_pidx);
+  }
+  let indices = PATTERNS.indices[shared_bilayer.pattern];
+  let sign = 0;
+  if (indices[fr_pidx] < indices[to_pidx]) {
+    sign = 1;
+  } else {
+    sign = -1;
+  }
+  let between = Math.abs(indices[to_pidx] - indices[fr_pidx] - 1);
+  let height = co_fc[0];
+  let tile_side = Math.pow(PATTERN_SIZE, height);
+  let cost_per_tile = tile_side * tile_side;
+  return (
+    distance_to_escape(fr_sub_trace, from_fc, sign)
+  + distance_to_escape(to_sub_trace, to_fc, -sign)
+  + sign * between * cost_per_tile
+  );
+}
+
+function distance_to_escape(escape_from, start_at, direction) {
+  // Returns the distance from the given start_at coordinates (which should be
+  // inside the given escape_from coordinates) to the edge of the escape_from
+  // cell in the given direction. Returns undefined if there is missing info.
+  let start_trace = start_at[2];
+  let pidx = start_trace[start_trace.length - 1];
+
+  let start_bilayer = lookup_bilayer(parent_of(start_at))
+  if (start_bilayer == undefined) {
+    return undefined;
+  }
+
+  let indices = PATTERNS.indices[start_bilayer.pattern];
+  let idx = indices[pidx];
+
+  let local = 0;
+  if (direction > 0) {
+    local = PATTERN_SIZE - idx;
+  } else {
+    local = idx;
+  }
+  let unit = Math.pow(
+    PATTERN_SIZE,
+    start_bilayer.coords[1] - start_bilayer.coords[2].length + 1
+  );
+  unit *= unit;
+  local *= unit;
+  if (same(escape_from.coords, start_bilayer.coords)) {
+    return local;
+  } else {
+    return local + distance_to_escape(
+      escape_from,
+      parent_of(start_at),
+      direction
+    );
+  }
 }
 
 
@@ -2032,6 +2218,9 @@ function test_register_pattern() {
 }
 
 var TESTS = [
+  [ "blend_color:0", blend_color("#000000ff", "#ffffffff", 0.5), "#7f7f7fff"],
+  [ "same:0", same([4, 4], [4, 4]), true],
+  [ "same:1", same([4, 4], [5, 5]), false],
   [ "edge_seed:0", edge_seed([17, 1, [4]], 2), edge_seed([17, 1, [9]], 0) ],
   [ "edge_seed:1", edge_seed([17, 1, [1]], 0), edge_seed([17, 2, [7, 21]], 2) ],
   [ "orientation_at", orientation_at([17, 0, []]), undefined ],
@@ -2173,20 +2362,48 @@ LATE_TESTS = [
   ]
 ];
 
-function same(v1, v2) {
-  try {
-    if (Array.isArray(v1)) {
-      for (let i = 0; i < v1.length; ++i) {
-        if (!same(v1[i], v2[i])) {
+function same(a, b) {
+  if (Array.isArray(a)) {
+    if (Array.isArray(b)) {
+      if (a.length != b.length) {
+        return false;
+      }
+      for (var i = 0; i < a.length; ++i) {
+        if (!same(a[i], b[i])) {
           return false;
         }
       }
       return true;
-    } else { // TODO: Objects
-      return v1 == v2;
+    } else {
+      return false;
     }
-  } catch {
-    return false;
+  } else if (typeof a === "object") {
+    if (typeof b === "object") {
+      // keys & values match:
+      for (var k in a) {
+        if (a.hasOwnProperty(k)) {
+          if (!b.hasOwnProperty(k)) {
+            return false;
+          }
+          if (!same(a[k], b[k])) {
+            return false;
+          }
+        }
+      }
+      // extra keys in b?
+      for (var k in b) {
+        if (b.hasOwnProperty(k)) {
+          if (!a.hasOwnProperty(k)) {
+            return false;
+          }
+        }
+      }
+      return true;
+    } else {
+      return false;
+    }
+  } else {
+    return a === b;
   }
 }
 
@@ -2266,7 +2483,7 @@ if (!FAILED) {
       { "seed": 19283801, "color": "#ff4444", "positions": [] },
       { "seed": 74982018, "color": "#ffff22", "positions": [] },
       { "seed": 57319834, "color": "#4466ff", "positions": [] },
-      { "seed": 37198417, "color": "#ff44c", "positions": [] },
+      { "seed": 37198417, "color": "#ff44cc", "positions": [] },
       { "seed": 28391084, "color": "#44ccff", "positions": [] },
       { "seed": 88172738, "color": "#ffaa22", "positions": [] },
       { "seed": 91647178, "color": "#66ff66", "positions": [] },
@@ -2275,9 +2492,7 @@ if (!FAILED) {
       { "seed": 10719839, "color": "#aaff44", "positions": [] },
     ];
     for (let tr of CTX.trails) {
-      for (let i = 0; i < TRAIL_LENGTH; ++i) {
-        tr.positions.push([0, 0]);
-      }
+      tr.positions.push([0, 0]);
     }
 
     // Listen for window resizes but wait until 20 ms after the last consecutive
