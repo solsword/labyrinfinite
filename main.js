@@ -402,7 +402,9 @@ function draw_frame(now) {
   // TODO: Draw a background rectangle to get color here?
   CTX.clearRect(0, 0, CTX.cwidth, CTX.cheight);
 
-  // draw_labyrinth(CTX);
+  // TODO: DEBUG
+  draw_labyrinth(CTX, 5719283);
+  draw_labyrinth(CTX, 6274019);
   draw_destination(CTX);
   draw_trails(CTX);
 }
@@ -952,6 +954,10 @@ function advance_trails(ctx) {
     coords.push(next);
     if (coords.length > TRAIL_LENGTH) {
       coords.shift();
+    }
+    if (same(coords[0], coords[2])) { // we might be dithering
+      // TODO: DEBUG HERE!
+      console.log([coords[0], coords[1]]);
     }
   }
 
@@ -2170,9 +2176,16 @@ if (!failed) {
 
     // Set up trails:
     CTX.trails = [
-      { "seed": 19283801, "color": "red", "positions": [] },
-      { "seed": 74982018, "color": "blue", "positions": [] },
-      { "seed": 57319834, "color": "yellow", "positions": [] },
+      { "seed": 19283801, "color": "#ff4444", "positions": [] },
+      { "seed": 74982018, "color": "#ffff22", "positions": [] },
+      { "seed": 57319834, "color": "#4466ff", "positions": [] },
+      { "seed": 37198417, "color": "#ff44c", "positions": [] },
+      { "seed": 28391084, "color": "#44ccff", "positions": [] },
+      { "seed": 88172738, "color": "#ffaa22", "positions": [] },
+      { "seed": 91647178, "color": "#66ff66", "positions": [] },
+      { "seed": 48108409, "color": "#eeffaa", "positions": [] },
+      { "seed": 61749611, "color": "#bbeeff", "positions": [] },
+      { "seed": 10719839, "color": "#aaff44", "positions": [] },
     ];
     for (let tr of CTX.trails) {
       for (let i = 0; i < TRAIL_LENGTH; ++i) {
