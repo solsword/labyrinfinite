@@ -822,9 +822,9 @@ function fc__edge_ac(fc, edge) {
   // a number from 0 to 3, denoting North, East, South, and West in that order.
   let ac = fc__ac(fc);
 
-  let seed = fc[0];
-  let height = fc[1];
-  let trace = fc[2];
+  let seed = fc_seed(fc);
+  let height = fc_height(fc);
+  let trace = fc_trace(fc);
   let edge_height = height - trace.length
 
   let pw = Math.pow(5, edge_height+1); // width of a pattern
@@ -839,13 +839,33 @@ function fc__edge_ac(fc, edge) {
   ];
 }
 
+function fc_seed(fc) {
+  // Returns the seed of the given fractal coordinates
+  return fc[0];
+}
+
+function fc_height(fc) {
+  // Returns the height of the given fractal coordinates
+  return fc[1];
+}
+
+function fc_trace(fc) {
+  // Returns the trace of the given fractal coordinates.
+  return fc[2];
+}
+
+function build_fc(seed, height, trace) {
+  // Builds a set of fractal coordinates out of a seed, a height, and a trace.
+  return [seed, height, trace];
+}
+
 function extend_fc(fc) {
   // Extends the given fractal coordinates so that their height is increased by
   // one while still denoting the same cell. Returns a new set of coordinates
   // without modifying the originals.
-  let seed = fc[0];
-  let height = fc[1];
-  let trace = fc[2];
+  let seed = fc_seed(fc);
+  let height = fc_height(fc);
+  let trace = fc_trace(fc);
   let center = Math.floor(PATH_LENGTH / 2);
   return [
     seed,
@@ -856,9 +876,9 @@ function extend_fc(fc) {
 
 function parent_of(fc) {
   // Returns the fractal coordinates of the parent of the given cell.
-  let seed = fc[0];
-  let height = fc[1];
-  let trace = fc[2];
+  let seed = fc_seed(fc);
+  let height = fc_height(fc);
+  let trace = fc_trace(fc);
   if (trace.length <= 1) {
     return parent_of(extend_fc(fc));
   }
@@ -874,9 +894,9 @@ function normalize_fc(fc) {
   // unnecessary height and central indices. The result still refers to the
   // same cell. Returns a new set of coordinates without modifying the
   // originals.
-  let seed = fc[0];
-  let height = fc[1];
-  let trace = fc[2].slice();
+  let seed = fc_seed(fc);
+  let height = fc_height(fc);
+  let trace = fc_trace(fc).slice();
   let center = Math.floor(PATH_LENGTH / 2);
   while (trace[0] == center) {
     height -= 1;
@@ -888,9 +908,9 @@ function normalize_fc(fc) {
 function local_seed(fr_coords) {
   // Determines the local bilayer seed for the given fractal coordinate
   // location.
-  let seed = fr_coords[0];
-  let height = fr_coords[1];
-  let trace = fr_coords[2];
+  let seed = fc_seed(fr_coords);
+  let height = fc_height(fr_coords);
+  let trace = fc_trace(fr_coords);
   for (let i = 0; i < height; ++i) {
     seed = lfsr(seed);
   }
@@ -906,9 +926,9 @@ function edge_seed(fr_coords, edge) {
   // Will return the same seed for both fractal + edge coordinates that
   // reference each edge (e.g., for a 5×5 pattern size, the West (#3) edge of
   // [0, [10]] and the East (#1) edge of [1, [11, 14]] are the same edge).
-  let seed = fr_coords[0];
+  let seed = fc_seed(fr_coords);
   let ec = fc__edge_ac(fr_coords, edge);
-  let height = 1 + (fr_coords[1] - fr_coords[2].length);
+  let height = 1 + (fc_height(fr_coords) - fc_trace(fr_coords).length);
   let mix = ((seed + (17*ec[0])) ^ ec[1]) + 3*height;
   let churn = mix % 4;
   for (let i = 0; i < churn; ++i) {
@@ -967,9 +987,9 @@ function lookup_bilayer(fr_coords) {
   // Looks up the cached bilayer at the given fractal coordinates, or returns
   // undefined and adds an entry to the generation queue if that bilayer or one
   // of its parents is not yet cached.
-  let seed = fr_coords[0];
-  let height = fr_coords[1];
-  let trace = fr_coords[2];
+  let seed = fc_seed(fr_coords);
+  let height = fc_height(fr_coords);
+  let trace = fc_trace(fr_coords);
 
   let cache = BILAYER_CACHES[seed];
   if (cache == undefined) {
@@ -1044,8 +1064,8 @@ function gen_next() {
     }
     cache[cache.length - 1] = above;
   }
-  let height = next[1];
-  let trace = next[2];
+  let height = fc_height(next);
+  let trace = fc_trace(next);
   // Pop last entry in trace (points to bilayer we're being asked to generate)
   // and keep the rest to find our parent:
   let last = trace.pop();
@@ -1090,6 +1110,7 @@ function advance_trails(ctx) {
     let alt_dist = distance_to(alt_hfc, alt_dfc);
 
     let nfc; // next fractal coords
+    console.log("AT:", hfc, dfc, alt_hfc, alt_dfc);
     if (Math.abs(alt_dist) < Math.abs(dist)) { // alt is better
       console.log("alt: " + alt_dist + " (" + dist + ")");
       if (alt_dist > 0) { // forward
@@ -1170,9 +1191,9 @@ function next_fc(fc) {
   // Computes the fractal coordinates of the grid cell after the given
   // (fully-specified) fractal coordinates. Returns undefined if there's
   // unloaded information that's needed.
-  let seed = fc[0];
-  let height = fc[1];
-  let trace = fc[2];
+  let seed = fc_seed(fc);
+  let height = fc_height(fc);
+  let trace = fc_trace(fc);
   let bilayer = lookup_bilayer(parent_of(fc));
 
   // Our trace and pattern index:
@@ -1202,9 +1223,9 @@ function next_fc(fc) {
 
 function prev_fc(fc) {
   // Inverse of next_fc.
-  let seed = fc[0];
-  let height = fc[1];
-  let trace = fc[2];
+  let seed = fc_seed(fc);
+  let height = fc_height(fc);
+  let trace = fc_trace(fc);
   let bilayer = lookup_bilayer(parent_of(fc));
 
   // Our trace and pattern index:
@@ -1238,15 +1259,15 @@ function common_parent(from_fc, to_fc) {
   // followed by the pattern indices of the from and to coordinates within that
   // bilayer. Returns undefined if given coordinates with different seeds.
   // Check seeds:
-  if (from_fc[0] != to_fc[0]) {
+  if (fc_seed(from_fc) != fc_seed(to_fc)) {
     return undefined;
   }
 
   // Extend the heights of each coordinate to match:
-  while (from_fc[1] < to_fc[1]) {
+  while (fc_height(from_fc) < fc_height(to_fc)) {
     from_fc = extend_fc(from_fc);
   }
-  while (to_fc[1] < from_fc[1]) {
+  while (fc_height(to_fc) < fc_height(from_fc)) {
     to_fc = extend_fc(to_fc);
   }
 
@@ -1255,22 +1276,22 @@ function common_parent(from_fc, to_fc) {
   to_fc = extend_fc(to_fc);
 
   // Common seed:
-  let seed = from_fc[0];
+  let seed = fc_seed(from_fc);
 
   // Max-height:
-  let height = from_fc[1];
+  let height = fc_height(from_fc);
 
   // Loop to find where they first differ and remember where they're last the
   // same:
-  let co_fc = [seed, height, []];
+  let co_fc = build_fc(seed, height, []);
   let fr_pidx, to_pidx;
   for (let i = 0; i < height + 1; ++i) {
-    fr_pidx = from_fc[2][i];
-    to_pidx = to_fc[2][i];
+    fr_pidx = fc_trace(from_fc)[i];
+    to_pidx = fc_trace(to_fc)[i];
     if (fr_pidx != to_pidx) {
       break;
     } // else extend shared trace:
-    co_fc[2].push(fr_pidx);
+    fc_trace(co_fc).push(fr_pidx);
   }
 
   // Return the combined coordinates along with the positions (pattern indices)
@@ -1280,21 +1301,21 @@ function common_parent(from_fc, to_fc) {
 
 function is_inside(outer_fc, inner_fc) {
   // Returns whether the given inner_fc is inside the given outer_fc.
-  if (outer_fc[0] != inner_fc[0]) {
+  if (fc_seed(outer_fc) != fc_seed(inner_fc)) {
     return false; // seeds don't match
   }
 
-  while (outer_fc[1] < inner_fc[1]) {
+  while (fc_height(outer_fc) < fc_height(inner_fc)) {
     outer_fc = extend_fc(outer_fc);
   }
 
-  let oh = outer_fc[1];
-  let ih = inner_fc[1];
+  let oh = fc_height(outer_fc);
+  let ih = fc_height(inner_fc);
 
   let hd = oh - ih;
 
-  let o_trail = outer_fc[2];
-  let i_trail = inner_fc[2];
+  let o_trail = fc_trace(outer_fc);
+  let i_trail = fc_trace(inner_fc);
 
   var dscnt;
   for (dscnt = hd; dscnt < o_trail.length; ++dscnt) {
@@ -1348,7 +1369,7 @@ function distance_to(from_fc, to_fc) {
   // Like direction_towards, but returns a (positive or negative) distance
   // value instead of just a direction value. Returns undefined if the required
   // information is not yet loaded.
-  // TODO: Debug this; it's junk that only gets the sign right!
+  // TODO: DEBUG this; it's junk that only gets the sign right!
   // answer should be 0.
 
   // Check for matching coordinates:
@@ -1365,11 +1386,11 @@ function distance_to(from_fc, to_fc) {
   let co_fc = joint[0];
 
   let fr_pidx = joint[1];
-  let fr_sub_trace = co_fc[2].slice();
+  let fr_sub_trace = fc_trace(co_fc).slice();
   fr_sub_trace.push(fr_pidx);
 
   let to_pidx = joint[2];
-  let to_sub_trace = co_fc[2].slice();
+  let to_sub_trace = fc_trace(co_fc).slice();
   to_sub_trace.push(to_pidx);
 
   // Compute fractal coords where they last coincide:
@@ -1389,63 +1410,69 @@ function distance_to(from_fc, to_fc) {
     sign = -1;
   }
   let between = Math.abs(indices[to_pidx] - indices[fr_pidx] - 1);
-  let height = co_fc[1];
+  let height = fc_height(shared_bilayer.coords);
   let tile_side = Math.pow(PATTERN_SIZE, height);
   let cost_per_tile = tile_side * tile_side;
 
   let from_escape = distance_to_escape(
-    [co_fc[0], co_fc[1], fr_sub_trace],
     from_fc,
+    height-1,
     sign
   );
   if (from_escape == undefined) { return undefined; }
   let to_escape = distance_to_escape(
-    [co_fc[0], co_fc[1], to_sub_trace],
     to_fc,
+    height-1,
     -sign
   );
   if (to_escape == undefined) { return undefined; }
   let in_between = between * cost_per_tile;
 
-  return sign + sign * (from_escape + to_escape + in_between);
+  console.log("FTB:", from_escape, to_escape, in_between);
+  // TODO: DEBUG HERE (test distance_to:2)
+
+  return sign * (from_escape + to_escape + in_between - 1);
 }
 
-function distance_to_escape(escape_from, start_at, direction) {
-  // Returns the distance from the given start_at coordinates (which should be
-  // inside the given escape_from coordinates) to the edge of the escape_from
-  // cell in the given direction. Returns undefined if there is missing info,
-  // or 0 if the start coordinates aren't inside the escape coordinates.
-  let start_trace = start_at[2];
-  let pidx = start_trace[start_trace.length - 1];
+function distance_to_escape(fc, target_height, direction) {
+  // Returns the distance from the given fractal coordinates to the edge of the
+  // super-cell for those coordinates with the given height, in the given
+  // direction. Returns undefined if there is missing info, or zero if the
+  // specified cell is already at or above the target height. 
+  let height = fc_height(fc)
+  let trace = fc_trace(fc);
+  let pidx = trace[trace.length - 1];
+
+  // Effective height:
+  let e_height = height - trace.length;
+
+  //console.log(fc, target_height, e_height);
 
   // Base case:
-  if (!is_inside(escape_from, start_at)) {
+  if (e_height >= target_height) {
     return 0;
   }
 
-  let start_bilayer = lookup_bilayer(parent_of(start_at))
-  if (start_bilayer == undefined) {
+  let bilayer = lookup_bilayer(parent_of(fc))
+  if (bilayer == undefined) {
     return undefined;
   }
 
-  let idx = PATTERNS.indices[start_bilayer.pattern][pidx];
+  let idx = PATTERNS.indices[bilayer.pattern][pidx];
 
   let local = 0;
   if (direction > 0) {
-    local = PATH_LENGTH - 1 - idx;
+    local = PATH_LENGTH - idx;
   } else {
-    local = idx;
+    local = idx + 1;
   }
-  let unit = Math.pow(
-    PATTERN_SIZE,
-    start_bilayer.coords[1] - start_bilayer.coords[2].length + 1
-  );
+  let unit = Math.pow(PATTERN_SIZE, e_height + 1);
   unit *= unit;
   local *= unit;
 
   let above = distance_to_escape(
-    escape_from,
-    parent_of(start_at),
+    parent_of(fc),
+    target_height,
     direction
   );
   if (above == undefined) {
@@ -2485,7 +2512,27 @@ LATE_TESTS = [
     "direction_towards:0",
     [direction_towards, [[37198417, 1, [13, 2]], [37198417, 0, [13]]]],
     [direction_towards, [[37198417, 1, [8, 22]], [37198417, 0, [13]]]]
-  ]
+  ],
+  [
+    "distance_to:0",
+    [distance_to, [ [19283, 1, [16, 13]], [19283, 1, [15, 4]] ]],
+    [x => x, [28] ]
+  ],
+  [
+    "distance_to:1",
+    [distance_to, [ [19283, 1, [16, 18]], [19283, 1, [15, 4]] ]],
+    [x => x, [27] ]
+  ],
+  [
+    "distance_to:2",
+    [distance_to, [ [16481, 1, [11, 24]], [16481, 1, [11, 10]] ]],
+    [x => x, [6] ]
+  ],
+  [
+    "distance_to:3",
+    [distance_to, [ [16481, 1, [16, 4]], [16481, 1, [11, 10]] ]],
+    [x => x, [7] ]
+  ],
 ];
 
 function same(a, b) {
