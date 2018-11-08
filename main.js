@@ -52,6 +52,14 @@ var TEST_DELAY = 50;
 // Delay (ms) between trails updates
 var TRAILS_DELAY = 3; // 20;
 
+// How long to wait (in TRAILS_DELAY cycles) before automatically setting a new
+// destination.
+var AUTO_DEST_WAIT = 150;
+
+// Counter to keep track of the number of cycles until we should automatically
+// set a new random destination.
+var AUTO_DEST = AUTO_DEST_WAIT;
+
 // All pattern entrances have this orientation
 var PATTERN_ENTRANCE_ORIENTATION = 3;
 
@@ -907,6 +915,26 @@ function central_coords(seed, height) {
   return [ seed, height, [ center ] ];
 }
 
+function random_destination(ctx) {
+  // Uses the current destination as a seed to pick a new random destination.
+  let r = lfsr(lfsr(ctx.destination[0]) + ctx.destination[1] + 19287391);
+  let scramble = posmod(
+    (ctx.destination[0] % 8) ^ (ctx.destination[1] % 8),
+    8
+  );
+  for (let i = 0; i < scramble; ++i) {
+    r = lfsr(r);
+  }
+  let sign = (2 * posmod(r, 2)) - 1;
+  r = lfsr(r);
+  let x = sign * posmod(r, PATTERN_SIZE + 3);
+  r = lfsr(r);
+  sign = (2 * posmod(r, 2)) - 1;
+  r = lfsr(r);
+  let y = sign * posmod(r, PATTERN_SIZE + 3);
+  return [x, y];
+}
+
 // ------------------
 // Caching and Lookup
 // ------------------
@@ -1031,6 +1059,7 @@ function gen_next() {
 function advance_trails(ctx) {
   let dest = ctx.destination;
 
+  let moved = 0;
   for (tr of ctx.trails) {
     let seed = tr.seed;
     let dfc = ac__fc(seed, dest); // fractal coords
@@ -1039,8 +1068,6 @@ function advance_trails(ctx) {
     let hfc = ac__fc(seed, wc__gc(head));
     //let dir = direction_towards(hfc, dfc);
     let dir = distance_to(hfc, dfc);
-    // TODO: DEBUG HERE!!!
-    console.log(dir);
     let nfc; // next fractal coords
     if (dir > 0) { // forward
       nfc = next_fc(hfc);
@@ -1057,12 +1084,14 @@ function advance_trails(ctx) {
       continue;
     }
     let next = fc__ac(nfc);
+    moved += 1;
     coords.push(next);
     if (coords.length > TRAIL_LENGTH) {
       coords.shift();
     }
     /*
      * TODO: Not sure why this gives false alarms...
+     * Maybe because of load-based skipped turns?
     if (
       !DEST_CHANGED
    && same(coords[coords.length - 1], coords[coords.length - 3])
@@ -1085,6 +1114,16 @@ function advance_trails(ctx) {
 
   // Reset
   DEST_CHANGED = false;
+
+  if (moved == 0) { // count ticks until we reset destination
+    AUTO_DEST -= 1;
+    if (AUTO_DEST <= 0) {
+      set_destination(ctx, random_destination(ctx));
+      AUTO_DEST = AUTO_DEST_WAIT;
+    }
+  } else {
+    AUTO_DEST = AUTO_DEST_WAIT;
+  }
 
   // Requeue
   if (!FAILED) {
@@ -1206,6 +1245,33 @@ function common_parent(from_fc, to_fc) {
   return [co_fc, fr_pidx, to_pidx];
 }
 
+function is_inside(outer_fc, inner_fc) {
+  // Returns whether the given inner_fc is inside the given outer_fc.
+  if (outer_fc[0] != inner_fc[0]) {
+    return false; // seeds don't match
+  }
+
+  while (outer_fc[1] < inner_fc[1]) {
+    outer_fc = extend_fc(outer_fc);
+  }
+
+  let oh = outer_fc[1];
+  let ih = inner_fc[1];
+
+  let hd = oh - ih;
+
+  let o_trail = outer_fc[2];
+  let i_trail = inner_fc[2];
+
+  var dscnt;
+  for (dscnt = hd; dscnt < o_trail.length; ++dscnt) {
+    if (i_trail[dscnt - hd] != o_trail[dscnt]) {
+      return false;
+    }
+  }
+  return dscnt - hd < i_trail.length;
+}
+
 function direction_towards(from_fc, to_fc) {
   // Computes the direction (forward or reverse) that's required to travel from
   // the from_fc to the to_fc (both fractal coordinates). Returns -1 for
@@ -1288,34 +1354,50 @@ function distance_to(from_fc, to_fc) {
     sign = -1;
   }
   let between = Math.abs(indices[to_pidx] - indices[fr_pidx] - 1);
-  let height = co_fc[0];
+  let height = co_fc[1];
   let tile_side = Math.pow(PATTERN_SIZE, height);
   let cost_per_tile = tile_side * tile_side;
-  return (
-    distance_to_escape(fr_sub_trace, from_fc, sign)
-  + distance_to_escape(to_sub_trace, to_fc, -sign)
-  + sign * between * cost_per_tile
+
+  let from_escape = distance_to_escape(
+    [co_fc[0], co_fc[1], fr_sub_trace],
+    from_fc,
+    sign
   );
+  if (from_escape == undefined) { return undefined; }
+  let to_escape = distance_to_escape(
+    [co_fc[0], co_fc[1], to_sub_trace],
+    to_fc,
+    -sign
+  );
+  if (to_escape == undefined) { return undefined; }
+  let in_between = between * cost_per_tile;
+
+  return sign + sign * (from_escape + to_escape + in_between);
 }
 
 function distance_to_escape(escape_from, start_at, direction) {
   // Returns the distance from the given start_at coordinates (which should be
   // inside the given escape_from coordinates) to the edge of the escape_from
-  // cell in the given direction. Returns undefined if there is missing info.
+  // cell in the given direction. Returns undefined if there is missing info,
+  // or 0 if the start coordinates aren't inside the escape coordinates.
   let start_trace = start_at[2];
   let pidx = start_trace[start_trace.length - 1];
+
+  // Base case:
+  if (!is_inside(escape_from, start_at)) {
+    return 0;
+  }
 
   let start_bilayer = lookup_bilayer(parent_of(start_at))
   if (start_bilayer == undefined) {
     return undefined;
   }
 
-  let indices = PATTERNS.indices[start_bilayer.pattern];
-  let idx = indices[pidx];
+  let idx = PATTERNS.indices[start_bilayer.pattern][pidx];
 
   let local = 0;
   if (direction > 0) {
-    local = PATTERN_SIZE - idx;
+    local = PATH_LENGTH - 1 - idx;
   } else {
     local = idx;
   }
@@ -1325,14 +1407,16 @@ function distance_to_escape(escape_from, start_at, direction) {
   );
   unit *= unit;
   local *= unit;
-  if (same(escape_from.coords, start_bilayer.coords)) {
-    return local;
+
+  let above = distance_to_escape(
+    escape_from,
+    parent_of(start_at),
+    direction
+  );
+  if (above == undefined) {
+    return undefined;
   } else {
-    return local + distance_to_escape(
-      escape_from,
-      parent_of(start_at),
-      direction
-    );
+    return local + above;
   }
 }
 
@@ -2352,6 +2436,13 @@ var TESTS = [
     common_parent([17, 1, [13, 2]], [17, 0, [13]]),
     [ [17, 2, [12]], 13, 12 ]
   ],
+  [ "is_inside:0", is_inside([17, 3, [4, 8]], [17, 3, [4, 8, 12, 4]]), true ],
+  [ "is_inside:1", is_inside([17, 3, [12, 12, 7]], [17, 1, [7, 1]]), true ],
+  [ "is_inside:2", is_inside([17, 3, [12, 12, 7]], [17, 1, [7]]), false ],
+  [ "is_inside:3", is_inside([17, 3, [12, 12, 7]], [17, 1, [8]]), false ],
+  [ "is_inside:4", is_inside([17, 1, [7]], [17, 1, [7]]), false ],
+  [ "is_inside:5", is_inside([17, 1, [7]], [17, 2, [12, 7]]), false ],
+  [ "is_inside:6", is_inside([17, 1, [7]], [17, 3, [12, 12, 7, 1]]), true ],
 ];
 
 LATE_TESTS = [
