@@ -423,6 +423,8 @@ function draw_frame(now) {
   // TODO: DEBUG
   // draw_labyrinth(CTX, 5719283);
   // draw_labyrinth(CTX, 6274019);
+  draw_labyrinth(CTX, 19283, "#8888cc", -2);
+  draw_labyrinth(CTX, 16481, "#44aa44", 2);
   draw_destination(CTX);
   draw_trails(CTX);
 }
@@ -493,11 +495,18 @@ function orientation_at(fc) {
   return PATTERNS.orientations[bilayer.pattern][lidx];
 }
 
-function draw_labyrinth(ctx, seed) {
+function draw_labyrinth(ctx, seed, color, offset) {
   // Draws the visible portion of the labyrinth
+  if (color == undefined) {
+    color = GRID_COLOR;
+  }
+
+  if (offset == undefined) {
+    offset = 0;
+  }
 
   // Set stroke color:
-  ctx.strokeStyle = GRID_COLOR;
+  ctx.strokeStyle = color;
   ctx.lineWidth = 2;
 
   // Radius of each grid cell
@@ -517,7 +526,7 @@ function draw_labyrinth(ctx, seed) {
       if (ori == undefined) { // not available yet; has been requested
         // Just draw a circle
         ctx.beginPath();
-        ctx.arc(cc[0], cc[1], cell_size*0.2, 0, 2*Math.PI);
+        ctx.arc(cc[0] + offset, cc[1] + offset, cell_size*0.2, 0, 2*Math.PI);
         ctx.stroke();
 
       } else { // Draw a from-link
@@ -531,8 +540,8 @@ function draw_labyrinth(ctx, seed) {
 
         // Draw a simple line:
         ctx.beginPath();
-        ctx.moveTo(st_cc[0], st_cc[1]);
-        ctx.lineTo(cc[0], cc[1]);
+        ctx.moveTo(st_cc[0] + offset, st_cc[1] + offset);
+        ctx.lineTo(cc[0] + offset, cc[1] + offset);
         ctx.stroke();
 
       }
@@ -1062,21 +1071,45 @@ function advance_trails(ctx) {
   let moved = 0;
   for (tr of ctx.trails) {
     let seed = tr.seed;
-    let dfc = ac__fc(seed, dest); // fractal coords
+    let alt_seed = tr.alt_seed;
+
+    // fractal coords of destination:
+    let dfc = ac__fc(seed, dest);
+    let alt_dfc = ac__fc(alt_seed, dest);
+
+    // head of path:
     let coords = tr.positions;
     let head = coords[coords.length - 1];
-    let hfc = ac__fc(seed, wc__gc(head));
-    //let dir = direction_towards(hfc, dfc);
-    let dir = distance_to(hfc, dfc);
+
+    // fractal coords of path head:
+    let hfc = ac__fc(seed, head);
+    let alt_hfc = ac__fc(alt_seed, head);
+
+    // distances to destination:
+    let dist = distance_to(hfc, dfc);
+    let alt_dist = distance_to(alt_hfc, alt_dfc);
+
     let nfc; // next fractal coords
-    if (dir > 0) { // forward
-      nfc = next_fc(hfc);
-    } else if (dir < 0) {
-      nfc = prev_fc(hfc);
-    } else {
-      // skip this trail, as it requires loading more info or is at the dest
-      //if (coords.length > 1) { coords.shift(); }
-      continue;
+    if (Math.abs(alt_dist) < Math.abs(dist)) { // alt is better
+      console.log("alt: " + alt_dist + " (" + dist + ")");
+      if (alt_dist > 0) { // forward
+        nfc = next_fc(alt_hfc);
+      } else if (alt_dist < 0) {
+        nfc = prev_fc(alt_hfc);
+      } else {
+        // skip this trail, as it requires loading more info or is at the dest
+        continue;
+      }
+    } else { // main is better
+      console.log("main: " + dist + " (" + alt_dist + ")");
+      if (dist > 0) { // forward
+        nfc = next_fc(hfc);
+      } else if (dist < 0) {
+        nfc = prev_fc(hfc);
+      } else {
+        // skip this trail, as it requires loading more info or is at the dest
+        continue;
+      }
     }
     if (nfc == undefined) {
       // need more info for next/prev FC...
@@ -1315,6 +1348,8 @@ function distance_to(from_fc, to_fc) {
   // Like direction_towards, but returns a (positive or negative) distance
   // value instead of just a direction value. Returns undefined if the required
   // information is not yet loaded.
+  // TODO: Debug this; it's junk that only gets the sign right!
+  // answer should be 0.
 
   // Check for matching coordinates:
   if (same(from_fc, to_fc)) {
@@ -2571,16 +2606,18 @@ if (!FAILED) {
 
     // Set up trails:
     CTX.trails = [
-      { "seed": 19283801, "color": "#ff4444", "positions": [] },
-      { "seed": 74982018, "color": "#ffff22", "positions": [] },
-      { "seed": 57319834, "color": "#4466ff", "positions": [] },
-      { "seed": 37198417, "color": "#ff44cc", "positions": [] },
-      { "seed": 28391084, "color": "#44ccff", "positions": [] },
-      { "seed": 88172738, "color": "#ffaa22", "positions": [] },
-      { "seed": 91647178, "color": "#66ff66", "positions": [] },
-      { "seed": 48108409, "color": "#eeffaa", "positions": [] },
-      { "seed": 61749611, "color": "#bbeeff", "positions": [] },
-      { "seed": 10719839, "color": "#aaff44", "positions": [] },
+      { "seed": 19283, "alt_seed": 16481, "color": "#ff4444", "positions": [] },
+      /*
+      { "seed": 74982, "alt_seed": 75818, "color": "#ffff22", "positions": [] },
+      { "seed": 57319, "alt_seed": 57284, "color": "#4466ff", "positions": [] },
+      { "seed": 37198, "alt_seed": 37417, "color": "#ff44cc", "positions": [] },
+      { "seed": 28391, "alt_seed": 24864, "color": "#44ccff", "positions": [] },
+      { "seed": 88172, "alt_seed": 85728, "color": "#ffaa22", "positions": [] },
+      { "seed": 91647, "alt_seed": 97418, "color": "#66ff66", "positions": [] },
+      { "seed": 48108, "alt_seed": 47589, "color": "#eeffaa", "positions": [] },
+      { "seed": 61749, "alt_seed": 63411, "color": "#bbeeff", "positions": [] },
+      { "seed": 10719, "alt_seed": 10409, "color": "#aaff44", "positions": [] },
+      */
     ];
     for (let tr of CTX.trails) {
       tr.positions.push([0, 0]);
