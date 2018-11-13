@@ -12,7 +12,15 @@
   <div id="controls">
     <input type="button" value="→" onclick="set_mode('wiggle');"/>
     <input type="button" value="#" onclick="set_mode('grid');"/>
-    <input type="button" value="##" onclick="set_mode('bigrid');"/>
+    <input type="button" value="##" onclick="set_mode('multigrid');"/>
+    <div id="sub_controls">
+      <select name="How many grids?" id="grid_num_select">
+        <option value="1">1</option>
+        <option value="2">2</option>
+        <option value="3">3</option>
+        <option value="4">4</option>
+      </select>
+    </div>
   </div>
 </body>
 </html>

@@ -23,3 +23,7 @@ canvas {
   text-align: center;
   width: calc(100vw - 4em);
 }
+
+#sub_controls {
+  margin: 4pt;
+}

@@ -12,7 +12,10 @@ var PATTERNS = undefined;
 var TRAIL_LENGTH = 15;
 
 // Minimum zoom-in when everything is in one place
-var MIN_SCALE = 24;
+var MIN_SCALE = 8;
+
+// Comfortable scale level
+var COMFORTABLE_SCALE = MIN_SCALE * 4;
 
 // How much bigger than the interest bounding box should the scale be
 var IDEAL_SCALE_MULTIPLIER = 1.6;
@@ -23,13 +26,39 @@ var ZOOM_OUT_SPEED = 1.8
 
 // Speed at which to pan the origin (percentage of distance-to-ideal-origin per
 // second)
-var PAN_SPEED = 4.5;
+var PAN_SPEEDS = {
+  'wiggle': 4.5,
+  'grid': 0.9,
+  'multigrid': 0.9,
+};
 
-// The color of the grid
-var GRID_COLOR = "white";
+// The default color of the grid
+var DEFAULT_GRID_COLOR = "#ffffff";
 
 // The color of the destination
 var DEST_COLOR = "#ffffff";
+
+// The palette for trails
+var PALETTE = [
+  "#ff4444", // red
+  "#ffff22", // yellow
+  "#4466ff", // blue
+  "#ff44cc", // pink
+  "#44ccff", // light aqua
+  "#ffaa22", // orange
+  "#66ff66", // green
+  "#f8ffaa", // cream
+  "#bbeeff", // sky blue
+  "#aaff44" // lime green
+];
+
+// The palette for grids
+var GRID_PALETTE = [
+  "#f8ffaa", // cream
+  "#229944", // green
+  "#44ccff", // light aqua
+  "#ff44cc", // pink
+];
 
 // Size of each pattern
 var PATTERN_SIZE = 5;
@@ -60,9 +89,12 @@ var TEST_DELAY = 50;
 // Delay (ms) between trails updates
 var TRAILS_DELAY = 3; // 20;
 
-// How long to wait (in TRAILS_DELAY cycles) before automatically setting a new
-// destination.
-var AUTO_DEST_WAIT = 360;
+// How long to wait between auto destination checks
+var AUTO_DEST_DELAY = 30;
+
+// How long to wait (in AUTO_DEST_DELAY cycles) before automatically setting a
+// new destination.
+var AUTO_DEST_WAIT = 100;
 
 // Counter to keep track of the number of cycles until we should automatically
 // set a new random destination.
@@ -93,19 +125,36 @@ var CHECK_GEN_INTEGRITY = true;
 // Keep track of whether our destination changed:
 var DEST_CHANGED = false;
 
+// Have all wiggles reached the destination?
+var AT_DESTINATION = true;
+
 // Current mode
-var MODE = 'wiggle';
+var MODE = undefined;
+
+// Track first draw after mode change
+var MODE_CHANGED = false;
 
 // -------------------------
 // Updaters & Event Handlers
 // -------------------------
 
 function set_mode(mode) {
+  if (MODE != mode) {
+    MODE_CHANGED = true;
+  }
   MODE = mode;
+  if (MODE == 'grid' || mode == 'multigrid') {
+    document.getElementById("grid_num_select").style.display = 'inline';
+  } else {
+    document.getElementById("grid_num_select").style.display = 'none';
+  }
 }
 
 function set_scale(context, scale_factor) {
   // Scale is in world-units-per-canvas-width
+  if (scale_factor < MIN_SCALE) {
+    scale_factor = MIN_SCALE;
+  }
   context.scale = scale_factor;
 }
 
@@ -439,17 +488,40 @@ function draw_frame(now) {
   // TODO: DEBUG
   // draw_labyrinth(CTX, 19283, "#8888cc", -2);
   // draw_labyrinth(CTX, 16481, "#44aa44", 2);
+  if (MODE_CHANGED) {
+    MODE_CHANGED = false;
+    set_origin(CTX, [0, 0]);
+    set_scale(CTX, COMFORTABLE_SCALE);
+    set_destination(CTX, [0, 0]);
+  }
   if (MODE == 'wiggle') {
     adjust_viewport(CTX);
     draw_destination(CTX);
     draw_trails(CTX);
   } else if (MODE == 'grid') {
-    set_origin(CTX, [0, 0]);
-    draw_labyrinth(CTX, 5719283, "#888888");
-  } else if (MODE == 'bigrid') {
-    set_origin(CTX, [0, 0]);
-    draw_labyrinth(CTX, 5719283, "#2288aa", -2);
-    draw_labyrinth(CTX, 6274019, "#22aa88", 2);
+    adjust_viewport(CTX);
+    draw_destination(CTX);
+    let gnsel = document.getElementById("grid_num_select");
+    let n_grids = parseInt(gnsel.value);
+    let base_seed = 5719283;
+    for (let i = 0; i < n_grids; ++i) {
+      let seed = lfsr(base_seed + 829483 + i);
+      let color = GRID_PALETTE[i];
+      if (i == n_grids - 1) {
+        draw_labyrinth(CTX, seed, color);
+      }
+    }
+  } else if (MODE == 'multigrid') {
+    adjust_viewport(CTX);
+    draw_destination(CTX);
+    let gnsel = document.getElementById("grid_num_select");
+    let n_grids = parseInt(gnsel.value);
+    let base_seed = 5719283;
+    for (let i = 0; i < n_grids; ++i) {
+      let seed = lfsr(base_seed + 829483 + i);
+      let color = GRID_PALETTE[i];
+      draw_labyrinth(CTX, seed, color, 4*i);
+    }
   } else { // unknown mode
     set_origin(CTX, [0, 0]);
     draw_labyrinth(CTX, 8579113, "#ffbb44");
@@ -466,12 +538,14 @@ function interest_bb(ctx) {
     "bottom": ctx.destination[1]
   }
 
-  for (let trail of ctx.trails) {
-    for (let pos of trail.positions) {
-      if (pos[0] < result.left) { result.left = pos[0]; }
-      if (pos[0] > result.right) { result.right = pos[0]; }
-      if (pos[1] < result.top) { result.top = pos[1]; }
-      if (pos[1] > result.bottom) { result.bottom = pos[1]; }
+  if (MODE == 'wiggle') {
+    for (let trail of ctx.trails) {
+      for (let pos of trail.positions) {
+        if (pos[0] < result.left) { result.left = pos[0]; }
+        if (pos[0] > result.right) { result.right = pos[0]; }
+        if (pos[1] < result.top) { result.top = pos[1]; }
+        if (pos[1] > result.bottom) { result.bottom = pos[1]; }
+      }
     }
   }
   return result;
@@ -481,26 +555,28 @@ function adjust_viewport(ctx) {
   // Adjusts the scaling factor and origin according to points of interest
   let ibb = interest_bb(ctx);
 
-  let ar = (ctx.cwidth / ctx.cheight);
-  let ideal_scale = Math.max(
-    MIN_SCALE,
-    ibb.right - ibb.left,
-    (ibb.bottom - ibb.top) * ar,
-  ) * IDEAL_SCALE_MULTIPLIER;
+  if (MODE == 'wiggle') {
+    let ar = (ctx.cwidth / ctx.cheight);
+    let ideal_scale = Math.max(
+      COMFORTABLE_SCALE,
+      ibb.right - ibb.left,
+      (ibb.bottom - ibb.top) * ar,
+    ) * IDEAL_SCALE_MULTIPLIER;
 
-  let scale_diff = ideal_scale - ctx.scale;
+    let scale_diff = ideal_scale - ctx.scale;
 
-  let zs;
-  if (scale_diff > 0) { // zooming out
-    zs = ZOOM_OUT_SPEED;
-  } else {
-    zs = ZOOM_IN_SPEED;
+    let zs;
+    if (scale_diff > 0) { // zooming out
+      zs = ZOOM_OUT_SPEED;
+    } else {
+      zs = ZOOM_IN_SPEED;
+    }
+
+    ctx.scale = Math.max(
+      MIN_SCALE,
+      ctx.scale + zs * scale_diff * (ctx.elapsed / 1000)
+    );
   }
-
-  ctx.scale = Math.max(
-    MIN_SCALE,
-    ctx.scale + zs * scale_diff * (ctx.elapsed / 1000)
-  );
 
   let ideal_center = [
     (ibb.left + ibb.right) / 2,
@@ -513,8 +589,8 @@ function adjust_viewport(ctx) {
   ];
 
   ctx.origin = [
-    ctx.origin[0] + PAN_SPEED * center_diff[0] * (ctx.elapsed / 1000),
-    ctx.origin[1] + PAN_SPEED * center_diff[1] * (ctx.elapsed / 1000),
+    ctx.origin[0] + PAN_SPEEDS[MODE] * center_diff[0] * (ctx.elapsed / 1000),
+    ctx.origin[1] + PAN_SPEEDS[MODE] * center_diff[1] * (ctx.elapsed / 1000),
   ];
 }
 
@@ -545,7 +621,7 @@ function orientation_at(fc) {
 function draw_labyrinth(ctx, seed, color, offset) {
   // Draws the visible portion of the labyrinth
   if (color == undefined) {
-    color = GRID_COLOR;
+    color = DEFAULT_GRID_COLOR;
   }
 
   if (offset == undefined) {
@@ -1214,7 +1290,18 @@ function advance_trails(ctx) {
   // Reset
   DEST_CHANGED = false;
 
-  if (moved == 0) { // count ticks until we reset destination
+  AT_DESTINATION = moved == 0; // report whether we're stopped or not
+
+  // Requeue
+  if (!FAILED) {
+    window.setTimeout(advance_trails, TRAILS_DELAY, ctx);
+  } else {
+    console.error("Stopped trails due to test failure.");
+  }
+}
+
+function scramble_destination(ctx) {
+  if (MODE != 'wiggle' || AT_DESTINATION) {
     AUTO_DEST -= 1;
     if (AUTO_DEST <= 0) {
       set_destination(ctx, next_destination(ctx));
@@ -1226,9 +1313,9 @@ function advance_trails(ctx) {
 
   // Requeue
   if (!FAILED) {
-    window.setTimeout(advance_trails, TRAILS_DELAY, ctx);
+    window.setTimeout(scramble_destination, AUTO_DEST_DELAY, ctx);
   } else {
-    console.error("Stopped trails due to test failure.");
+    console.error("Stopped destination scrambling due to test failure.");
   }
 }
 
@@ -1582,10 +1669,14 @@ function gen_central_bilayer(seed, height, child_bilayer) {
     let nori = randint(4, lfsr(seed + 75981238));
     let xori = randint(4, lfsr(seed + 3127948));
 
-    // Pattern chosen so that its entrance and exit will have the appropriate
+    // Sockets chosen at random, with one being universal to avoid the potential
+    // for collision.
+    // TODO: Was this necessary?
+    // so that its entrance and exit will have the appropriate
     // edge sockets for their neighbors.
+    // TODO: This can pick incompatible sockets!?!
     let n_socket = random_socket(edge_seed(fc, nori));
-    let x_socket = random_socket(edge_seed(fc, xori));
+    let x_socket = random_universal_socket(edge_seed(fc, xori));
     let poss = pattern_possibilities([nori, n_socket], [xori, x_socket]);
     result.pattern = choose_randomly(poss, lfsr(seed + 817293891));
   }
@@ -2160,6 +2251,7 @@ function pattern_possibilities(nc, xc) {
     if (x_specific) { // specific entrance and exit
       if (CHECK_GEN_INTEGRITY && exlu[xid] == undefined) {
         console.error("Undefined specific entrance/exit pattern space.");
+        console.log(nid, xid);
       }
       result = exlu[xid].slice();
     } else { // specific entrance, nonspecific exit
@@ -2709,22 +2801,23 @@ if (!FAILED) {
 
     // Set initial canvas size & scale:
     update_canvas_size(canvas, CTX);
+    set_mode('wiggle');
     set_scale(CTX, 1);
     set_origin(CTX, [0, 0]);
     set_destination(CTX, [0, 0]);
 
     // Set up trails:
     CTX.trails = [
-      { "seed": 19283, "alt_seed": 16481, "color": "#ff4444", "positions": [] },
-      { "seed": 74982, "alt_seed": 75818, "color": "#ffff22", "positions": [] },
-      { "seed": 57319, "alt_seed": 57284, "color": "#4466ff", "positions": [] },
-      { "seed": 37198, "alt_seed": 37417, "color": "#ff44cc", "positions": [] },
-      { "seed": 28391, "alt_seed": 24864, "color": "#44ccff", "positions": [] },
-      { "seed": 88172, "alt_seed": 85728, "color": "#ffaa22", "positions": [] },
-      { "seed": 91647, "alt_seed": 97418, "color": "#66ff66", "positions": [] },
-      { "seed": 48108, "alt_seed": 47589, "color": "#eeffaa", "positions": [] },
-      { "seed": 61749, "alt_seed": 63411, "color": "#bbeeff", "positions": [] },
-      { "seed": 10719, "alt_seed": 10409, "color": "#aaff44", "positions": [] },
+      {"seed": 19283, "alt_seed": 16481, "color": PALETTE[0], "positions": []},
+      {"seed": 74982, "alt_seed": 75818, "color": PALETTE[1], "positions": []},
+      {"seed": 57319, "alt_seed": 57284, "color": PALETTE[2], "positions": []},
+      {"seed": 37198, "alt_seed": 37417, "color": PALETTE[3], "positions": []},
+      {"seed": 28391, "alt_seed": 24864, "color": PALETTE[4], "positions": []},
+      {"seed": 88172, "alt_seed": 85728, "color": PALETTE[5], "positions": []},
+      {"seed": 91647, "alt_seed": 97418, "color": PALETTE[6], "positions": []},
+      {"seed": 48108, "alt_seed": 47589, "color": PALETTE[7], "positions": []},
+      {"seed": 61749, "alt_seed": 63411, "color": PALETTE[8], "positions": []},
+      {"seed": 10719, "alt_seed": 10409, "color": PALETTE[9], "positions": []},
     ];
     for (let tr of CTX.trails) {
       tr.positions.push([0, 0]);
@@ -2770,5 +2863,8 @@ if (!FAILED) {
 
     // Kick of trails subsystem
     advance_trails(CTX);
+
+    // Kick off destination scrambling
+    scramble_destination(CTX);
   };
 }
