@@ -10,8 +10,16 @@ canvas {
   background: #000;
   border-radius: 4px;
   position: absolute;
-  left: 5vw;
-  width: 90vw;
-  top: 5vh;
-  height: 90vh;
+  left: 2em;
+  width: calc(100vw - 4em);
+  top: 2em;
+  height: calc(100vh - 6em);
+}
+
+#controls {
+  position: absolute;
+  top: calc(100vh - 3em);
+  left: 2em;
+  text-align: center;
+  width: calc(100vw - 4em);
 }

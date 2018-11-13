@@ -9,5 +9,10 @@
 </head>
 <body>
   <canvas id="labyrinth" width="800" height="800" ></canvas>
+  <div id="controls">
+    <input type="button" value="→" onclick="set_mode('wiggle');"/>
+    <input type="button" value="#" onclick="set_mode('grid');"/>
+    <input type="button" value="##" onclick="set_mode('bigrid');"/>
+  </div>
 </body>
 </html>

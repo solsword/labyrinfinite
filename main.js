@@ -14,8 +14,16 @@ var TRAIL_LENGTH = 15;
 // Minimum zoom-in when everything is in one place
 var MIN_SCALE = 24;
 
+// How much bigger than the interest bounding box should the scale be
+var IDEAL_SCALE_MULTIPLIER = 1.6;
+
 // Speed at which to change scales (percentage of scale difference per second)
-var ZOOM_SPEED = 0.6
+var ZOOM_IN_SPEED = 1.2
+var ZOOM_OUT_SPEED = 1.8
+
+// Speed at which to pan the origin (percentage of distance-to-ideal-origin per
+// second)
+var PAN_SPEED = 4.5;
 
 // The color of the grid
 var GRID_COLOR = "white";
@@ -54,7 +62,7 @@ var TRAILS_DELAY = 3; // 20;
 
 // How long to wait (in TRAILS_DELAY cycles) before automatically setting a new
 // destination.
-var AUTO_DEST_WAIT = 150;
+var AUTO_DEST_WAIT = 360;
 
 // Counter to keep track of the number of cycles until we should automatically
 // set a new random destination.
@@ -85,13 +93,24 @@ var CHECK_GEN_INTEGRITY = true;
 // Keep track of whether our destination changed:
 var DEST_CHANGED = false;
 
+// Current mode
+var MODE = 'wiggle';
+
 // -------------------------
 // Updaters & Event Handlers
 // -------------------------
 
+function set_mode(mode) {
+  MODE = mode;
+}
+
 function set_scale(context, scale_factor) {
   // Scale is in world-units-per-canvas-width
   context.scale = scale_factor;
+}
+
+function set_origin(context, origin) {
+  context.origin = origin;
 }
 
 function set_destination(context, grid_coords) {
@@ -181,21 +200,22 @@ function cc__vc(ctx, cc) {
 // Canvas <-> world coordinates
 function cc__wc(ctx, cc) {
   return [
-    ((cc[0] - ctx.cwidth/2)/ctx.cwidth) * ctx.scale,
-    ((cc[1] - ctx.cheight/2)/ctx.cwidth) * ctx.scale // scale ignores height
+    ((cc[0] - ctx.cwidth/2)/ctx.cwidth) * ctx.scale + ctx.origin[0],
+    ((cc[1] - ctx.cheight/2)/ctx.cwidth) * ctx.scale + ctx.origin[1]
+    // scale ignores canvas height
   ];
 }
 
 function wc__cc(ctx, wc) {
   return [
-    (wc[0] / ctx.scale) * ctx.cwidth + ctx.cwidth/2,
-    (wc[1] / ctx.scale) * ctx.cwidth + ctx.cheight/2
+    ((wc[0] - ctx.origin[0]) / ctx.scale) * ctx.cwidth + ctx.cwidth/2,
+    ((wc[1] - ctx.origin[1]) / ctx.scale) * ctx.cwidth + ctx.cheight/2
   ];
 }
 
 function canvas_unit(ctx) {
   // Returns the length of one world-coordinate unit in canvas coordinates.
-  return wc__cc(ctx, [1, 0])[0] - ctx.cwidth/2;
+  return (ctx.cwidth / ctx.scale);
 }
 
 // World <-> grid coordinates
@@ -413,20 +433,27 @@ function draw_frame(now) {
   FRAME += 1;
   FRAME %= MAX_FC;
 
-  // TODO: let user lock-out autoadjust?
-  adjust_viewport(CTX);
-
   // Clear the canvas:
-  // TODO: Draw a background rectangle to get color here?
   CTX.clearRect(0, 0, CTX.cwidth, CTX.cheight);
 
   // TODO: DEBUG
-  // draw_labyrinth(CTX, 5719283);
-  // draw_labyrinth(CTX, 6274019);
-  draw_labyrinth(CTX, 19283, "#8888cc", -2);
-  draw_labyrinth(CTX, 16481, "#44aa44", 2);
-  draw_destination(CTX);
-  draw_trails(CTX);
+  // draw_labyrinth(CTX, 19283, "#8888cc", -2);
+  // draw_labyrinth(CTX, 16481, "#44aa44", 2);
+  if (MODE == 'wiggle') {
+    adjust_viewport(CTX);
+    draw_destination(CTX);
+    draw_trails(CTX);
+  } else if (MODE == 'grid') {
+    set_origin(CTX, [0, 0]);
+    draw_labyrinth(CTX, 5719283, "#888888");
+  } else if (MODE == 'bigrid') {
+    set_origin(CTX, [0, 0]);
+    draw_labyrinth(CTX, 5719283, "#2288aa", -2);
+    draw_labyrinth(CTX, 6274019, "#22aa88", 2);
+  } else { // unknown mode
+    set_origin(CTX, [0, 0]);
+    draw_labyrinth(CTX, 8579113, "#ffbb44");
+  }
 }
 
 function interest_bb(ctx) {
@@ -451,24 +478,44 @@ function interest_bb(ctx) {
 }
 
 function adjust_viewport(ctx) {
-  // Adjusts the scaling factor according to points of interest
+  // Adjusts the scaling factor and origin according to points of interest
   let ibb = interest_bb(ctx);
 
   let ar = (ctx.cwidth / ctx.cheight);
   let ideal_scale = Math.max(
     MIN_SCALE,
-    2 * Math.abs(ibb.right),
-    2 * Math.abs(ibb.left),
-    2 * Math.abs(ibb.bottom) * ar,
-    2 * Math.abs(ibb.top) * ar
-  ) * 1.2;
+    ibb.right - ibb.left,
+    (ibb.bottom - ibb.top) * ar,
+  ) * IDEAL_SCALE_MULTIPLIER;
 
   let scale_diff = ideal_scale - ctx.scale;
 
+  let zs;
+  if (scale_diff > 0) { // zooming out
+    zs = ZOOM_OUT_SPEED;
+  } else {
+    zs = ZOOM_IN_SPEED;
+  }
+
   ctx.scale = Math.max(
     MIN_SCALE,
-    ctx.scale + ZOOM_SPEED * scale_diff * (ctx.elapsed / 1000)
+    ctx.scale + zs * scale_diff * (ctx.elapsed / 1000)
   );
+
+  let ideal_center = [
+    (ibb.left + ibb.right) / 2,
+    (ibb.top + ibb.bottom) / 2
+  ];
+
+  let center_diff = [
+    ideal_center[0] - ctx.origin[0],
+    ideal_center[1] - ctx.origin[1]
+  ];
+
+  ctx.origin = [
+    ctx.origin[0] + PAN_SPEED * center_diff[0] * (ctx.elapsed / 1000),
+    ctx.origin[1] + PAN_SPEED * center_diff[1] * (ctx.elapsed / 1000),
+  ];
 }
 
 function orientation_at(fc) {
@@ -545,11 +592,6 @@ function draw_labyrinth(ctx, seed, color, offset) {
         ctx.stroke();
 
       }
-      /*
-      // TODO: DEBUG
-      ctx.fillStyle = "white";
-      ctx.fillText("" + fc[2], cc[0], cc[1]);
-      // */
     }
   }
 
@@ -646,27 +688,23 @@ function lfsr(x) {
 function randint(up_to, seed) {
   // Picks a random integer strictly less than the given value using the given
   // seed.
-  // TODO: Does this need work?
   return posmod(seed, up_to);
 }
 
 function choose_randomly(possibilities, seed) {
   // Picks randomly from a list using the given seed.
-  // TODO: Does this need work?
   let idx = posmod(seed, possibilities.length);
   return possibilities[idx];
 }
 
 function random_socket(seed) {
   // Picks a random edge socket using the given seed.
-  // TODO: Does this need improvement?
   return posmod(seed, Math.floor(PATTERN_SIZE/2));
 }
 
 function random_universal_socket(seed) {
   // Picks a random socket that's a universal connector, meaning it doesn't put
   // any constraints on the other entrance/exit socket of a cell it's added to.
-  // TODO: Does this need improvement?
   let range = Math.floor(PATTERN_SIZE/2) - 2;
   if (range > 0) {
     return 1 + posmod(seed, range);
@@ -944,24 +982,31 @@ function central_coords(seed, height) {
   return [ seed, height, [ center ] ];
 }
 
-function random_destination(ctx) {
-  // Uses the current destination as a seed to pick a new random destination.
-  let r = lfsr(lfsr(ctx.destination[0]) + ctx.destination[1] + 19287391);
-  let scramble = posmod(
-    (ctx.destination[0] % 8) ^ (ctx.destination[1] % 8),
-    8
-  );
-  for (let i = 0; i < scramble; ++i) {
-    r = lfsr(r);
+var CLOSE_DESTINATIONS = [];
+var CLOSE_SIZE = 60;
+for (let x = -CLOSE_SIZE; x <= CLOSE_SIZE; ++x) {
+  for (let y = -CLOSE_SIZE; y <= CLOSE_SIZE; ++y) {
+    CLOSE_DESTINATIONS.push([x, y]);
   }
-  let sign = (2 * posmod(r, 2)) - 1;
-  r = lfsr(r);
-  let x = sign * posmod(r, PATTERN_SIZE + 3);
-  r = lfsr(r);
-  sign = (2 * posmod(r, 2)) - 1;
-  r = lfsr(r);
-  let y = sign * posmod(r, PATTERN_SIZE + 3);
-  return [x, y];
+}
+// Fisher-Yates
+var RDEST_SEED = lfsr(39872081);
+for (let i = 0; i < CLOSE_DESTINATIONS.length; ++i) {
+  let remaining = CLOSE_DESTINATIONS.length - i - 1;
+  let choice = posmod(RDEST_SEED, remaining + 1);
+  let tmp = CLOSE_DESTINATIONS[i];
+  CLOSE_DESTINATIONS[i] = CLOSE_DESTINATIONS[i + choice];
+  CLOSE_DESTINATIONS[i + choice] = tmp;
+  RDEST_SEED = lfsr(RDEST_SEED + lfsr(i));
+}
+
+// Which nearby destination we're going to now.
+var WHICH_DEST = 0;
+
+function next_destination(ctx) {
+  // Returns the next destination from a shuffled list of nearby destinations.
+  WHICH_DEST = posmod(WHICH_DEST + 1, CLOSE_DESTINATIONS.length);
+  return CLOSE_DESTINATIONS[WHICH_DEST];
 }
 
 // ------------------
@@ -1109,61 +1154,61 @@ function advance_trails(ctx) {
     let dist = distance_to(hfc, dfc);
     let alt_dist = distance_to(alt_hfc, alt_dfc);
 
-    let nfc; // next fractal coords
-    console.log("AT:", hfc, dfc, alt_hfc, alt_dfc);
-    if (Math.abs(alt_dist) < Math.abs(dist)) { // alt is better
-      console.log("alt: " + alt_dist + " (" + dist + ")");
-      if (alt_dist > 0) { // forward
-        nfc = next_fc(alt_hfc);
-      } else if (alt_dist < 0) {
-        nfc = prev_fc(alt_hfc);
-      } else {
-        // skip this trail, as it requires loading more info or is at the dest
-        continue;
-      }
-    } else { // main is better
-      console.log("main: " + dist + " (" + alt_dist + ")");
-      if (dist > 0) { // forward
-        nfc = next_fc(hfc);
-      } else if (dist < 0) {
-        nfc = prev_fc(hfc);
-      } else {
-        // skip this trail, as it requires loading more info or is at the dest
-        continue;
-      }
-    }
-    if (nfc == undefined) {
-      // need more info for next/prev FC...
-      //if (coords.length > 1) { coords.shift(); }
+    let n_fc, alt_n_fc;
+    if (dist > 0) {
+      n_fc = next_fc(hfc);
+    } else if (dist < 0) {
+      n_fc = prev_fc(hfc);
+    } else {
+      // skip this trail, since there's missing info or it has arrived
       continue;
     }
-    let next = fc__ac(nfc);
+
+    if (alt_dist > 0) {
+      alt_n_fc = next_fc(alt_hfc);
+    } else if (alt_dist < 0) {
+      alt_n_fc = prev_fc(alt_hfc);
+    } else {
+      // skip this trail, since there's missing info or it has arrived
+      continue;
+    }
+
+    let n_alt_fc = ac__fc(alt_seed, fc__ac(n_fc));
+    let unalt_n_fc = ac__fc(seed, fc__ac(alt_n_fc));
+
+    // the four potential distances:
+    let n_dist = distance_to(n_fc, dfc);
+    let n_alt_dist = distance_to(n_alt_fc, alt_dfc);
+
+    let alt_n_dist = distance_to(alt_n_fc, alt_dfc);
+    let unalt_n_dist = distance_to(unalt_n_fc, dfc);
+
+    if (
+      n_dist == undefined
+   || n_alt_dist == undefined
+   || alt_n_dist == undefined
+   || unalt_n_dist == undefined
+    ) {
+      // Skip if we're missing info
+      continue;
+    }
+
+    // combined distances used to pick which direction to go in:
+    let unalt_combined = Math.min(Math.abs(n_dist), Math.abs(n_alt_dist));
+    let alt_combined = Math.min(Math.abs(alt_n_dist), Math.abs(unalt_n_dist));
+
+    let chosen; // next fractal coords
+    if (unalt_combined < alt_combined) { // unalt is better
+      chosen = n_fc;
+    } else {
+      chosen = alt_n_fc;
+    }
+    let next = fc__ac(chosen);
     moved += 1;
     coords.push(next);
     if (coords.length > TRAIL_LENGTH) {
       coords.shift();
     }
-    /*
-     * TODO: Not sure why this gives false alarms...
-     * Maybe because of load-based skipped turns?
-    if (
-      !DEST_CHANGED
-   && same(coords[coords.length - 1], coords[coords.length - 3])
-    ) { // we might be dithering
-      console.error("Possible dithering...");
-      console.log(coords.slice());
-      let bl = lookup_bilayer(
-        [
-          hfc[0],
-          hfc[1],
-          hfc[2].slice(0, hfc[2].length-1)
-        ]
-      );
-      console.log([hfc[0], hfc[2], PATTERNS.positions[bl.pattern]]);
-      //FAILED = true;
-      //break;
-    }
-    */
   }
 
   // Reset
@@ -1172,7 +1217,7 @@ function advance_trails(ctx) {
   if (moved == 0) { // count ticks until we reset destination
     AUTO_DEST -= 1;
     if (AUTO_DEST <= 0) {
-      set_destination(ctx, random_destination(ctx));
+      set_destination(ctx, next_destination(ctx));
       AUTO_DEST = AUTO_DEST_WAIT;
     }
   } else {
@@ -1369,8 +1414,6 @@ function distance_to(from_fc, to_fc) {
   // Like direction_towards, but returns a (positive or negative) distance
   // value instead of just a direction value. Returns undefined if the required
   // information is not yet loaded.
-  // TODO: DEBUG this; it's junk that only gets the sign right!
-  // answer should be 0.
 
   // Check for matching coordinates:
   if (same(from_fc, to_fc)) {
@@ -1410,28 +1453,35 @@ function distance_to(from_fc, to_fc) {
     sign = -1;
   }
   let between = Math.abs(indices[to_pidx] - indices[fr_pidx] - 1);
-  let height = fc_height(shared_bilayer.coords);
+  let height = (
+    fc_height(shared_bilayer.coords)
+  - fc_trace(shared_bilayer.coords).length
+  );
   let tile_side = Math.pow(PATTERN_SIZE, height);
   let cost_per_tile = tile_side * tile_side;
 
   let from_escape = distance_to_escape(
     from_fc,
-    height-1,
+    height - 1,
     sign
   );
   if (from_escape == undefined) { return undefined; }
   let to_escape = distance_to_escape(
     to_fc,
-    height-1,
+    height - 1,
     -sign
   );
   if (to_escape == undefined) { return undefined; }
   let in_between = between * cost_per_tile;
+  if (height <= 0) {
+    in_between += 1;
+  }
 
-  console.log("FTB:", from_escape, to_escape, in_between);
-  // TODO: DEBUG HERE (test distance_to:2)
-
-  return sign * (from_escape + to_escape + in_between - 1);
+  let adjust = 0;
+  if (from_escape > 0 && to_escape > 0) {
+    adjust = 1;
+  }
+  return sign * (from_escape + to_escape + in_between - adjust);
 }
 
 function distance_to_escape(fc, target_height, direction) {
@@ -1492,7 +1542,7 @@ function gen_central_bilayer(seed, height, child_bilayer) {
   // central bilayer, at the given height.
 
   // Compute the seed
-  let fc = central_coords(seed, height);
+  let fc = central_coords(seed, height + 1);
   let l_seed = local_seed(fc);
 
   // Assemble empty result:
@@ -1531,9 +1581,6 @@ function gen_central_bilayer(seed, height, child_bilayer) {
     // Pick random entrance/exit orientations:
     let nori = randint(4, lfsr(seed + 75981238));
     let xori = randint(4, lfsr(seed + 3127948));
-    // TODO: Check variety here?!?
-    // TODO DEBUG HERE
-    //console.log([nori, xori]);
 
     // Pattern chosen so that its entrance and exit will have the appropriate
     // edge sockets for their neighbors.
@@ -2516,22 +2563,32 @@ LATE_TESTS = [
   [
     "distance_to:0",
     [distance_to, [ [19283, 1, [16, 13]], [19283, 1, [15, 4]] ]],
-    [x => x, [28] ]
+    [x => x, [18] ]
   ],
   [
     "distance_to:1",
     [distance_to, [ [19283, 1, [16, 18]], [19283, 1, [15, 4]] ]],
-    [x => x, [27] ]
+    [x => x, [19] ]
   ],
   [
     "distance_to:2",
-    [distance_to, [ [16481, 1, [11, 24]], [16481, 1, [11, 10]] ]],
-    [x => x, [6] ]
+    [distance_to, [ [16481, 1, [11, 23]], [16481, 1, [11, 10]] ]],
+    [x => x, [7] ]
   ],
   [
     "distance_to:3",
+    [distance_to, [ [16481, 1, [11, 24]], [16481, 1, [11, 10]] ]],
+    [x => x, [12] ]
+  ],
+  [
+    "distance_to:4",
     [distance_to, [ [16481, 1, [16, 4]], [16481, 1, [11, 10]] ]],
-    [x => x, [7] ]
+    [x => x, [13] ]
+  ],
+  [
+    "distance_to:5",
+    [distance_to, [ [16481, 1, [16, 3]], [16481, 1, [11, 10]] ]],
+    [x => x, [16] ]
   ],
 ];
 
@@ -2610,7 +2667,11 @@ function keep_testing(tests) {
   if (unresolved.length > 0) {
     window.setTimeout(keep_testing, TEST_DELAY, unresolved);
   } else {
-    console.log("Late tests all passed.");
+    if (FAILED) {
+      console.log("Late tests done failing.");
+    } else {
+      console.log("Late tests all passed.");
+    }
   }
 }
 
@@ -2649,12 +2710,12 @@ if (!FAILED) {
     // Set initial canvas size & scale:
     update_canvas_size(canvas, CTX);
     set_scale(CTX, 1);
+    set_origin(CTX, [0, 0]);
     set_destination(CTX, [0, 0]);
 
     // Set up trails:
     CTX.trails = [
       { "seed": 19283, "alt_seed": 16481, "color": "#ff4444", "positions": [] },
-      /*
       { "seed": 74982, "alt_seed": 75818, "color": "#ffff22", "positions": [] },
       { "seed": 57319, "alt_seed": 57284, "color": "#4466ff", "positions": [] },
       { "seed": 37198, "alt_seed": 37417, "color": "#ff44cc", "positions": [] },
@@ -2664,7 +2725,6 @@ if (!FAILED) {
       { "seed": 48108, "alt_seed": 47589, "color": "#eeffaa", "positions": [] },
       { "seed": 61749, "alt_seed": 63411, "color": "#bbeeff", "positions": [] },
       { "seed": 10719, "alt_seed": 10409, "color": "#aaff44", "positions": [] },
-      */
     ];
     for (let tr of CTX.trails) {
       tr.positions.push([0, 0]);
