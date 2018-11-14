@@ -2925,8 +2925,7 @@ if (!FAILED) {
     }
 
     // Clicking (or tapping) sets destination:
-    document.onclick = function (ev) {
-      if (ev.preventDefault) { ev.preventDefault(); }
+    canvas.onclick = function (ev) {
       handle_tap(CTX, ev);
     }
 
