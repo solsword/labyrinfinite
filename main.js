@@ -28,8 +28,8 @@ var ZOOM_OUT_SPEED = 1.8
 // second)
 var PAN_SPEEDS = {
   'wiggle': 4.5,
-  'grid': 0.9,
-  'multigrid': 0.9,
+  'grid': 0.8,
+  'multigrid': 0.8,
 };
 
 // The default color of the grid
@@ -49,15 +49,23 @@ var PALETTE = [
   "#66ff66", // green
   "#f8ffaa", // cream
   "#bbeeff", // sky blue
-  "#aaff44" // lime green
+  "#aaff44", // lime green
+];
+
+// The seeds for the multigrids:
+var GRID_SEEDS = [
+  1947912873,
+  2578974913,
+  3195721145,
+  4759174098,
 ];
 
 // The palette for grids
 var GRID_PALETTE = [
-  "#f8ffaa", // cream
-  "#229944", // green
   "#44ccff", // light aqua
   "#ff44cc", // pink
+  "#f8ffaa", // cream
+  "#aaff44", // lime green
 ];
 
 // Size of each pattern
@@ -87,7 +95,10 @@ var GEN_DELAY = 5;
 var TEST_DELAY = 50;
 
 // Delay (ms) between trails updates
-var TRAILS_DELAY = 3; // 20;
+var TRAILS_DELAY = 20;
+
+// Delay (ms) between destination advances
+var DEST_ADVANCE_DELAY = 128;
 
 // How long to wait between auto destination checks
 var AUTO_DEST_DELAY = 30;
@@ -206,10 +217,19 @@ function event_pos(ctx, ev) {
   return pgc__vc(ctx, [ev.clientX, ev.clientY]);
 }
 
+function on_canvas(vc) {
+  return (
+    0 <= vc[0] && vc[0] <= 1
+ && 0 <= vc[1] && vc[1] <= 1
+  );
+}
+
 function handle_tap(ctx, ev) {
   let vc = event_pos(ctx, ev);
-  let gc = wc__gc(cc__wc(ctx, vc__cc(ctx, vc)));
-  set_destination(ctx, gc);
+  if (on_canvas(vc)) {
+    let gc = wc__gc(cc__wc(ctx, vc__cc(ctx, vc)));
+    set_destination(ctx, gc);
+  }
 }
 
 // --------------------
@@ -503,9 +523,8 @@ function draw_frame(now) {
     draw_destination(CTX);
     let gnsel = document.getElementById("grid_num_select");
     let n_grids = parseInt(gnsel.value);
-    let base_seed = 5719283;
     for (let i = 0; i < n_grids; ++i) {
-      let seed = lfsr(base_seed + 829483 + i);
+      let seed = GRID_SEEDS[i];
       let color = GRID_PALETTE[i];
       if (i == n_grids - 1) {
         draw_labyrinth(CTX, seed, color);
@@ -516,11 +535,10 @@ function draw_frame(now) {
     draw_destination(CTX);
     let gnsel = document.getElementById("grid_num_select");
     let n_grids = parseInt(gnsel.value);
-    let base_seed = 5719283;
     for (let i = 0; i < n_grids; ++i) {
-      let seed = lfsr(base_seed + 829483 + i);
+      let seed = GRID_SEEDS[i];
       let color = GRID_PALETTE[i];
-      draw_labyrinth(CTX, seed, color, 4*i);
+      draw_labyrinth(CTX, seed, color, 4*Math.abs(n_grids - i - 1));
     }
   } else { // unknown mode
     set_origin(CTX, [0, 0]);
@@ -1300,8 +1318,40 @@ function advance_trails(ctx) {
   }
 }
 
+function advance_destination(ctx) {
+
+  if (MODE == 'grid' || MODE == 'multigrid') {
+    let gnsel = document.getElementById("grid_num_select");
+    let which_grid = parseInt(gnsel.value) - 1;
+    let fc = ac__fc(GRID_SEEDS[which_grid], ctx.destination)
+    let nfc = next_fc(fc);
+    if (nfc != undefined) {
+      set_destination(ctx, fc__ac(nfc));
+    }
+  }
+
+  // Requeue
+  if (!FAILED) {
+    window.setTimeout(advance_destination, DEST_ADVANCE_DELAY, ctx);
+  } else {
+    console.error("Stopped destination advance due to test failure.");
+  }
+}
+
+function adjust_tempo(n) {
+  if (MODE == 'wiggle') {
+    TRAILS_DELAY *= n;
+    if (TRAILS_DELAY <= 1) { TRAILS_DELAY = 1; }
+    if (TRAILS_DELAY >= 1000) { TRAILS_DELAY = 1000; }
+  } else {
+    DEST_ADVANCE_DELAY *= n;
+    if (DEST_ADVANCE_DELAY <= 1) { DEST_ADVANCE_DELAY = 1; }
+    if (DEST_ADVANCE_DELAY >= 1000) { DEST_ADVANCE_DELAY = 1000; }
+  }
+}
+
 function scramble_destination(ctx) {
-  if (MODE != 'wiggle' || AT_DESTINATION) {
+  if (MODE == 'wiggle' && AT_DESTINATION) {
     AUTO_DEST -= 1;
     if (AUTO_DEST <= 0) {
       set_destination(ctx, next_destination(ctx));
@@ -2801,7 +2851,7 @@ if (!FAILED) {
 
     // Set initial canvas size & scale:
     update_canvas_size(canvas, CTX);
-    set_mode('wiggle');
+    set_mode('grid');
     set_scale(CTX, 1);
     set_origin(CTX, [0, 0]);
     set_destination(CTX, [0, 0]);
@@ -2863,6 +2913,9 @@ if (!FAILED) {
 
     // Kick of trails subsystem
     advance_trails(CTX);
+
+    // Kick off destination advance for grid modes
+    advance_destination(CTX);
 
     // Kick off destination scrambling
     scramble_destination(CTX);

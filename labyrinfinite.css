@@ -13,17 +13,21 @@ canvas {
   left: 2em;
   width: calc(100vw - 4em);
   top: 2em;
-  height: calc(100vh - 6em);
+  height: calc(100vh - 8em);
 }
 
 #controls {
   position: absolute;
-  top: calc(100vh - 3em);
+  top: calc(100vh - 5em);
   left: 2em;
   text-align: center;
   width: calc(100vw - 4em);
 }
 
 #sub_controls {
+  margin: 4pt;
+}
+
+#tempo_controls {
   margin: 4pt;
 }
