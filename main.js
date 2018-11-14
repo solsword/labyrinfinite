@@ -2924,14 +2924,11 @@ if (!FAILED) {
       handle_scroll(CTX, ev);
     }
 
-    // Clicking sets destination:
-    document.onmouseup = function (ev) {
+    // Clicking (or tapping) sets destination:
+    document.onclick = function (ev) {
       if (ev.preventDefault) { ev.preventDefault(); }
       handle_tap(CTX, ev);
     }
-    document.ontouchend = document.onmouseup;
-    // TODO: Really this?
-    document.ontouchcancel = document.onmouseup;
 
     // Draw every frame
     window.requestAnimationFrame(draw_frame);
