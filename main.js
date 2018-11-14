@@ -29,7 +29,6 @@ var ZOOM_OUT_SPEED = 1.8
 var PAN_SPEEDS = {
   'wiggle': 4.5,
   'grid': 0.8,
-  'multigrid': 0.8,
 };
 
 // The default color of the grid
@@ -52,7 +51,7 @@ var PALETTE = [
   "#aaff44", // lime green
 ];
 
-// The seeds for the multigrids:
+// The seeds for the different grids:
 var GRID_SEEDS = [
   1947912873,
   2578974913,
@@ -97,6 +96,18 @@ var TEST_DELAY = 50;
 // Delay (ms) between trails updates
 var TRAILS_DELAY = 20;
 
+// Delay between steps towards grid swaps
+var GRID_SWAP_DELAY = 90;
+
+// How many GRID_SWAP_DELAY increments before we swap grids
+var GRID_SWAP_INCREMENTS = 100;
+
+// Which grid we're on
+var GRID_INDEX = 0;
+
+// How much progress we've made towards swapping grids
+var GRID_SWAP_PROGRESS = 0;
+
 // Delay (ms) between destination advances
 var DEST_ADVANCE_DELAY = 128;
 
@@ -109,7 +120,7 @@ var AUTO_DEST_WAIT = 100;
 
 // Counter to keep track of the number of cycles until we should automatically
 // set a new random destination.
-var AUTO_DEST = AUTO_DEST_WAIT;
+var AUTO_DEST_COUNTER = 0;
 
 // All pattern entrances have this orientation
 var PATTERN_ENTRANCE_ORIENTATION = 3;
@@ -154,11 +165,6 @@ function set_mode(mode) {
     MODE_CHANGED = true;
   }
   MODE = mode;
-  if (MODE == 'grid' || mode == 'multigrid') {
-    document.getElementById("grid_num_select").style.display = 'inline';
-  } else {
-    document.getElementById("grid_num_select").style.display = 'none';
-  }
 }
 
 function set_scale(context, scale_factor) {
@@ -506,8 +512,8 @@ function draw_frame(now) {
   CTX.clearRect(0, 0, CTX.cwidth, CTX.cheight);
 
   // TODO: DEBUG
-  // draw_labyrinth(CTX, 19283, "#8888cc", -2);
-  // draw_labyrinth(CTX, 16481, "#44aa44", 2);
+  // draw_labyrinth(CTX, 19283, "#8888cc", 1, -2);
+  // draw_labyrinth(CTX, 16481, "#44aa44", 1, 2);
   if (MODE_CHANGED) {
     MODE_CHANGED = false;
     set_origin(CTX, [0, 0]);
@@ -521,25 +527,13 @@ function draw_frame(now) {
   } else if (MODE == 'grid') {
     adjust_viewport(CTX);
     draw_destination(CTX);
-    let gnsel = document.getElementById("grid_num_select");
-    let n_grids = parseInt(gnsel.value);
-    for (let i = 0; i < n_grids; ++i) {
-      let seed = GRID_SEEDS[i];
-      let color = GRID_PALETTE[i];
-      if (i == n_grids - 1) {
-        draw_labyrinth(CTX, seed, color);
-      }
-    }
-  } else if (MODE == 'multigrid') {
-    adjust_viewport(CTX);
-    draw_destination(CTX);
-    let gnsel = document.getElementById("grid_num_select");
-    let n_grids = parseInt(gnsel.value);
-    for (let i = 0; i < n_grids; ++i) {
-      let seed = GRID_SEEDS[i];
-      let color = GRID_PALETTE[i];
-      draw_labyrinth(CTX, seed, color, 4*Math.abs(n_grids - i - 1));
-    }
+
+    let progress = GRID_SWAP_PROGRESS / GRID_SWAP_INCREMENTS;
+    let α = 0.7 * Math.pow(progress, 3);
+    let gidx = GRID_INDEX;
+    let nx_gidx = posmod(GRID_INDEX + 1, GRID_SEEDS.length);
+    draw_labyrinth(CTX, GRID_SEEDS[nx_gidx], GRID_PALETTE[nx_gidx], α);
+    draw_labyrinth(CTX, GRID_SEEDS[gidx], GRID_PALETTE[gidx], 1 - α);
   } else { // unknown mode
     set_origin(CTX, [0, 0]);
     draw_labyrinth(CTX, 8579113, "#ffbb44");
@@ -636,10 +630,17 @@ function orientation_at(fc) {
   return PATTERNS.orientations[bilayer.pattern][lidx];
 }
 
-function draw_labyrinth(ctx, seed, color, offset) {
-  // Draws the visible portion of the labyrinth
+function draw_labyrinth(ctx, seed, color, α, offset) {
+  // Draws the visible portion of the labyrinth. α controls global alpha of the
+  // drawn labyrinth, while offset nudges the lines southeast in absolute
+  // coordinates. Color, α, and offset are each optional and default to the
+  // DEFAULT_GRID_COLOR, 1, and 0 respectively.
   if (color == undefined) {
     color = DEFAULT_GRID_COLOR;
+  }
+
+  if (α == undefined) {
+    α = 1;
   }
 
   if (offset == undefined) {
@@ -649,6 +650,7 @@ function draw_labyrinth(ctx, seed, color, offset) {
   // Set stroke color:
   ctx.strokeStyle = color;
   ctx.lineWidth = 2;
+  ctx.globalAlpha = α;
 
   // Radius of each grid cell
   let cell_size = canvas_unit(ctx);
@@ -689,20 +691,26 @@ function draw_labyrinth(ctx, seed, color, offset) {
     }
   }
 
-  // Done drawing the labyrinth!
+  // Done drawing the labyrinth (reset our global alpha)
+  ctx.globalAlpha = 1;
 }
 
 function draw_destination(ctx) {
   ctx.lineWidth = 4;
   ctx.strokeStyle = DEST_COLOR;
   ctx.fillStyle = DEST_COLOR;
+  let α = 1;
+  if (MODE == 'wiggle') {
+    α = 1 - (AUTO_DEST_COUNTER / AUTO_DEST_WAIT);
+  }
   ctx.beginPath();
   let cc = wc__cc(ctx, ctx.destination);
   ctx.arc(cc[0], cc[1], canvas_unit(ctx)*0.2, 0, 2*Math.PI);
+  ctx.globalAlpha = α;
   ctx.stroke();
-  ctx.globalAlpha = 0.25;
+  ctx.globalAlpha = 0.25 * α;
   ctx.fill();
-  ctx.globalAlpha = 1.0;
+  ctx.globalAlpha = 1;
 }
 
 function draw_trails(ctx) {
@@ -1320,10 +1328,8 @@ function advance_trails(ctx) {
 
 function advance_destination(ctx) {
 
-  if (MODE == 'grid' || MODE == 'multigrid') {
-    let gnsel = document.getElementById("grid_num_select");
-    let which_grid = parseInt(gnsel.value) - 1;
-    let fc = ac__fc(GRID_SEEDS[which_grid], ctx.destination)
+  if (MODE == 'grid') {
+    let fc = ac__fc(GRID_SEEDS[GRID_INDEX], ctx.destination)
     let nfc = next_fc(fc);
     if (nfc != undefined) {
       set_destination(ctx, fc__ac(nfc));
@@ -1351,14 +1357,15 @@ function adjust_tempo(n) {
 }
 
 function scramble_destination(ctx) {
-  if (MODE == 'wiggle' && AT_DESTINATION) {
-    AUTO_DEST -= 1;
-    if (AUTO_DEST <= 0) {
+  let do_scramble = document.getElementById("attract_mode").checked;
+  if (do_scramble && MODE == 'wiggle' && AT_DESTINATION) {
+    AUTO_DEST_COUNTER += 1;
+    if (AUTO_DEST_COUNTER >= AUTO_DEST_WAIT) {
       set_destination(ctx, next_destination(ctx));
-      AUTO_DEST = AUTO_DEST_WAIT;
+      AUTO_DEST_COUNTER = 0;
     }
   } else {
-    AUTO_DEST = AUTO_DEST_WAIT;
+    AUTO_DEST_COUNTER = 0;
   }
 
   // Requeue
@@ -1366,6 +1373,27 @@ function scramble_destination(ctx) {
     window.setTimeout(scramble_destination, AUTO_DEST_DELAY, ctx);
   } else {
     console.error("Stopped destination scrambling due to test failure.");
+  }
+}
+
+function swap_grids(ctx) {
+  let do_swap = document.getElementById("attract_mode").checked;
+  if (MODE == 'grid' && do_swap) {
+    GRID_SWAP_PROGRESS += 1;
+    if (GRID_SWAP_PROGRESS >= GRID_SWAP_INCREMENTS) {
+      // swap grids
+      GRID_INDEX = posmod(GRID_INDEX + 1, GRID_SEEDS.length);
+      GRID_SWAP_PROGRESS = 0;
+    }
+  } else {
+    GRID_SWAP_PROGRESS = 0;
+  }
+
+  // Requeue
+  if (!FAILED) {
+    window.setTimeout(swap_grids, GRID_SWAP_DELAY, ctx);
+  } else {
+    console.error("Stopped grid swapping due to test failure.");
   }
 }
 
@@ -2919,5 +2947,8 @@ if (!FAILED) {
 
     // Kick off destination scrambling
     scramble_destination(CTX);
+
+    // Kick off grid swapping
+    swap_grids(CTX);
   };
 }

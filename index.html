@@ -11,7 +11,6 @@
   <canvas id="labyrinth" width="800" height="800" ></canvas>
   <div id="controls">
     <input type="button" value="#" onclick="set_mode('grid');"/>
-    <input type="button" value="##" onclick="set_mode('multigrid');"/>
     <input type="button" value="@" onclick="set_mode('wiggle');"/>
     <div id="tempo_controls">
       <!-- TODO: Find a font that has these music note characters -->
@@ -21,12 +20,7 @@
       <input id="faster" type="button" value=">>>" onclick="adjust_tempo(0.75);"/>
     </div>
     <div id="sub_controls">
-      <select name="How many grids?" id="grid_num_select">
-        <option value="1">1</option>
-        <option value="2">2</option>
-        <option value="3">3</option>
-        <option value="4">4</option>
-      </select>
+      <input type="checkbox" id="attract_mode" checked="true"> O.O
     </div>
   </div>
 </body>
