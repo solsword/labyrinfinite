@@ -2915,16 +2915,16 @@ if (!FAILED) {
 
     // Set up trails:
     CTX.trails = [
-      {"seeds": [ 19283, 16481 ], "color": PALETTE[0], "positions": []},
-      {"seeds": [ 74982, 75818 ], "color": PALETTE[1], "positions": []},
-      {"seeds": [ 57319, 57284 ], "color": PALETTE[2], "positions": []},
-      {"seeds": [ 37198, 37417 ], "color": PALETTE[3], "positions": []},
-      {"seeds": [ 28391, 24864 ], "color": PALETTE[4], "positions": []},
-      {"seeds": [ 88172, 85728 ], "color": PALETTE[5], "positions": []},
-      {"seeds": [ 91647, 97418 ], "color": PALETTE[6], "positions": []},
-      {"seeds": [ 48108, 47589 ], "color": PALETTE[7], "positions": []},
-      {"seeds": [ 61749, 63411 ], "color": PALETTE[8], "positions": []},
-      {"seeds": [ 10719, 10409 ], "color": PALETTE[9], "positions": []},
+      {"seeds": [ 19283, 16481, 15718 ], "color": PALETTE[0], "positions": []},
+      {"seeds": [ 74982, 75818, 72491 ], "color": PALETTE[1], "positions": []},
+      {"seeds": [ 57319, 57284, 57491 ], "color": PALETTE[2], "positions": []},
+      {"seeds": [ 37198, 37417, 35818 ], "color": PALETTE[3], "positions": []},
+      {"seeds": [ 28391, 24864, 29578 ], "color": PALETTE[4], "positions": []},
+      {"seeds": [ 88172, 85728, 84711 ], "color": PALETTE[5], "positions": []},
+      {"seeds": [ 91647, 97418, 95171 ], "color": PALETTE[6], "positions": []},
+      {"seeds": [ 48108, 47589, 44758 ], "color": PALETTE[7], "positions": []},
+      {"seeds": [ 61749, 63411, 66172 ], "color": PALETTE[8], "positions": []},
+      {"seeds": [ 10719, 10409, 10755 ], "color": PALETTE[9], "positions": []},
     ];
     for (let tr of CTX.trails) {
       tr.positions.push([0, 0]);
