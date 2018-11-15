@@ -96,6 +96,10 @@ var TEST_DELAY = 50;
 // Delay (ms) between trails updates
 var TRAILS_DELAY = 20;
 
+// Minimum and maximum callback delays (in ms):
+var MIN_DELAY = 1;
+var MAX_DELAY = 2000;
+
 // Delay between steps towards grid swaps
 var GRID_SWAP_DELAY = 90;
 
@@ -956,6 +960,14 @@ function ac__fc(seed, ac) {
   return [seed, height, trace];
 }
 
+function alt_fc(fc, seed) {
+  // Returns a new fractal coordinate that's the same absolute position as the
+  // given coordinate, but for the given alternate seed.
+  let ac = fc__ac(fc);
+  if (ac == undefined) { return undefined; }
+  return ac__fc(seed, ac);
+}
+
 function fc__edge_ac(fc, edge) {
   // Works like fc__ac, but computes the coordinates of the middle of a
   // specific edge of the given bilayer (or cell). The edge is specified using
@@ -1237,77 +1249,71 @@ function advance_trails(ctx) {
 
   let moved = 0;
   for (tr of ctx.trails) {
-    let seed = tr.seed;
-    let alt_seed = tr.alt_seed;
-
-    // fractal coords of destination:
-    let dfc = ac__fc(seed, dest);
-    let alt_dfc = ac__fc(alt_seed, dest);
-
     // head of path:
     let coords = tr.positions;
     let head = coords[coords.length - 1];
 
-    // fractal coords of path head:
-    let hfc = ac__fc(seed, head);
-    let alt_hfc = ac__fc(alt_seed, head);
-
-    // distances to destination:
-    let dist = distance_to(hfc, dfc);
-    let alt_dist = distance_to(alt_hfc, alt_dfc);
-
-    let n_fc, alt_n_fc;
-    if (dist > 0) {
-      n_fc = next_fc(hfc);
-    } else if (dist < 0) {
-      n_fc = prev_fc(hfc);
-    } else {
-      // skip this trail, since there's missing info or it has arrived
+    if (same(head, dest)) {
+      // This trail is already at the destination:
       continue;
     }
 
-    if (alt_dist > 0) {
-      alt_n_fc = next_fc(alt_hfc);
-    } else if (alt_dist < 0) {
-      alt_n_fc = prev_fc(alt_hfc);
-    } else {
-      // skip this trail, since there's missing info or it has arrived
+    // iterate through seeds to find possible next absolute coordinates:
+    let seen = {};
+    let possible_successors = [];
+    let missing = false;
+    for (let seed of tr.seeds) {
+      let h = ac__fc(seed, head); // head in this seed
+      let ph = prev_fc(h);
+      let nh = next_fc(h);
+      if (ph == undefined || nh == undefined) {
+        missing = true; 
+        break;
+      }
+      let pac = fc__ac(ph);
+      let nac = fc__ac(nh);
+      let pac_str = "" + pac;
+      if (!seen.hasOwnProperty(pac_str)) {
+        seen[pac_str] = true;
+        possible_successors.push(pac);
+      }
+      let nac_str = "" + nac;
+      if (!seen.hasOwnProperty(nac_str)) {
+        seen[nac_str] = true;
+        possible_successors.push(nac);
+      }
+    }
+    if (missing) {
+      // Skip updating this trace if we're missing info
       continue;
     }
 
-    let n_alt_fc = ac__fc(alt_seed, fc__ac(n_fc));
-    let unalt_n_fc = ac__fc(seed, fc__ac(alt_n_fc));
-
-    // the four potential distances:
-    let n_dist = distance_to(n_fc, dfc);
-    let n_alt_dist = distance_to(n_alt_fc, alt_dfc);
-
-    let alt_n_dist = distance_to(alt_n_fc, alt_dfc);
-    let unalt_n_dist = distance_to(unalt_n_fc, dfc);
-
-    if (
-      n_dist == undefined
-   || n_alt_dist == undefined
-   || alt_n_dist == undefined
-   || unalt_n_dist == undefined
-    ) {
-      // Skip if we're missing info
+    let best_next = undefined;
+    let bd = undefined; // best distance
+    // iterate through seeds again to see which possible next coordinate has
+    // the best distance estimate:
+    for (let seed of tr.seeds) {
+      let d = ac__fc(seed, dest); // destination in this seed
+      for (let ac of possible_successors) {
+        let fc = ac__fc(seed, ac);
+        let dist = distance_between(fc, d);
+        if (dist == undefined) {
+          missing = true;
+          break;
+        }
+        if (bd == undefined || Math.abs(dist) < Math.abs(bd)) {
+          bd = dist;
+          best_next = ac;
+        }
+      }
+    }
+    if (missing) {
+      // Skip updating this trace if we're missing info
       continue;
     }
 
-    // combined distances used to pick which direction to go in:
-    let unalt_combined = Math.min(Math.abs(n_dist), Math.abs(n_alt_dist));
-    let alt_combined = Math.min(Math.abs(alt_n_dist), Math.abs(unalt_n_dist));
-
-    let chosen; // next fractal coords
-    if (unalt_combined < alt_combined) { // unalt is better
-      chosen = n_fc;
-    } else {
-      chosen = alt_n_fc;
-    }
-    let next = fc__ac(chosen);
     moved += 1;
-    coords.push(next);
+    coords.push(best_next);
     if (coords.length > TRAIL_LENGTH) {
       coords.shift();
     }
@@ -1345,14 +1351,27 @@ function advance_destination(ctx) {
 }
 
 function adjust_tempo(n) {
+  // Adjusts the tempo variable for the current mode by the given multiplier.
   if (MODE == 'wiggle') {
     TRAILS_DELAY *= n;
-    if (TRAILS_DELAY <= 1) { TRAILS_DELAY = 1; }
-    if (TRAILS_DELAY >= 1000) { TRAILS_DELAY = 1000; }
+    if (TRAILS_DELAY <= MIN_DELAY) { TRAILS_DELAY = MIN_DELAY; }
+    if (TRAILS_DELAY >= MAX_DELAY) { TRAILS_DELAY = MAX_DELAY; }
   } else {
     DEST_ADVANCE_DELAY *= n;
-    if (DEST_ADVANCE_DELAY <= 1) { DEST_ADVANCE_DELAY = 1; }
-    if (DEST_ADVANCE_DELAY >= 1000) { DEST_ADVANCE_DELAY = 1000; }
+    if (DEST_ADVANCE_DELAY <= MIN_DELAY) { DEST_ADVANCE_DELAY = MIN_DELAY; }
+    if (DEST_ADVANCE_DELAY >= MAX_DELAY) { DEST_ADVANCE_DELAY = MAX_DELAY; }
+  }
+}
+
+function set_tempo(n) {
+  // Sets the tempo variable for the given mode to the given value (should be
+  // between 0 for min-tempo and 1 for max-tempo. The scale is exponential.
+  let escale = 7;
+  let x = (Math.exp(escale*n) - 1) / (Math.exp(escale) - 1);
+  if (MODE == 'wiggle') {
+    TRAILS_DELAY = MIN_DELAY + (MAX_DELAY - MIN_DELAY) * x;
+  } else {
+    DEST_ADVANCE_DELAY = MIN_DELAY + (MAX_DELAY - MIN_DELAY) * x;
   }
 }
 
@@ -1394,6 +1413,19 @@ function swap_grids(ctx) {
     window.setTimeout(swap_grids, GRID_SWAP_DELAY, ctx);
   } else {
     console.error("Stopped grid swapping due to test failure.");
+  }
+}
+
+function toggle_attract_mode() {
+  // Handles page updates for toggling attract mode
+  let attract = document.getElementById("attract_mode").checked;
+  let spans = document.getElementsByClassName("attract_indicator");
+  let indicator = "·";
+  if (attract) {
+    indicator = "~";
+  }
+  for (let elem of spans) {
+    elem.innerHTML = indicator;
   }
 }
 
@@ -1575,7 +1607,7 @@ function direction_towards(from_fc, to_fc) {
   return undefined;
 }
 
-function distance_to(from_fc, to_fc) {
+function distance_between(from_fc, to_fc) {
   // Like direction_towards, but returns a (positive or negative) distance
   // value instead of just a direction value. Returns undefined if the required
   // information is not yet loaded.
@@ -1749,10 +1781,6 @@ function gen_central_bilayer(seed, height, child_bilayer) {
 
     // Sockets chosen at random, with one being universal to avoid the potential
     // for collision.
-    // TODO: Was this necessary?
-    // so that its entrance and exit will have the appropriate
-    // edge sockets for their neighbors.
-    // TODO: This can pick incompatible sockets!?!
     let n_socket = random_socket(edge_seed(fc, nori));
     let x_socket = random_universal_socket(edge_seed(fc, xori));
     let poss = pattern_possibilities([nori, n_socket], [xori, x_socket]);
@@ -2731,33 +2759,33 @@ LATE_TESTS = [
     [direction_towards, [[37198417, 1, [8, 22]], [37198417, 0, [13]]]]
   ],
   [
-    "distance_to:0",
-    [distance_to, [ [19283, 1, [16, 13]], [19283, 1, [15, 4]] ]],
+    "distance_between:0",
+    [distance_between, [ [19283, 1, [16, 13]], [19283, 1, [15, 4]] ]],
     [x => x, [18] ]
   ],
   [
-    "distance_to:1",
-    [distance_to, [ [19283, 1, [16, 18]], [19283, 1, [15, 4]] ]],
+    "distance_between:1",
+    [distance_between, [ [19283, 1, [16, 18]], [19283, 1, [15, 4]] ]],
     [x => x, [19] ]
   ],
   [
-    "distance_to:2",
-    [distance_to, [ [16481, 1, [11, 23]], [16481, 1, [11, 10]] ]],
+    "distance_between:2",
+    [distance_between, [ [16481, 1, [11, 23]], [16481, 1, [11, 10]] ]],
     [x => x, [7] ]
   ],
   [
-    "distance_to:3",
-    [distance_to, [ [16481, 1, [11, 24]], [16481, 1, [11, 10]] ]],
+    "distance_between:3",
+    [distance_between, [ [16481, 1, [11, 24]], [16481, 1, [11, 10]] ]],
     [x => x, [12] ]
   ],
   [
-    "distance_to:4",
-    [distance_to, [ [16481, 1, [16, 4]], [16481, 1, [11, 10]] ]],
+    "distance_between:4",
+    [distance_between, [ [16481, 1, [16, 4]], [16481, 1, [11, 10]] ]],
     [x => x, [13] ]
   ],
   [
-    "distance_to:5",
-    [distance_to, [ [16481, 1, [16, 3]], [16481, 1, [11, 10]] ]],
+    "distance_between:5",
+    [distance_between, [ [16481, 1, [16, 3]], [16481, 1, [11, 10]] ]],
     [x => x, [16] ]
   ],
 ];
@@ -2883,19 +2911,20 @@ if (!FAILED) {
     set_scale(CTX, 1);
     set_origin(CTX, [0, 0]);
     set_destination(CTX, [0, 0]);
+    set_tempo(0.5);
 
     // Set up trails:
     CTX.trails = [
-      {"seed": 19283, "alt_seed": 16481, "color": PALETTE[0], "positions": []},
-      {"seed": 74982, "alt_seed": 75818, "color": PALETTE[1], "positions": []},
-      {"seed": 57319, "alt_seed": 57284, "color": PALETTE[2], "positions": []},
-      {"seed": 37198, "alt_seed": 37417, "color": PALETTE[3], "positions": []},
-      {"seed": 28391, "alt_seed": 24864, "color": PALETTE[4], "positions": []},
-      {"seed": 88172, "alt_seed": 85728, "color": PALETTE[5], "positions": []},
-      {"seed": 91647, "alt_seed": 97418, "color": PALETTE[6], "positions": []},
-      {"seed": 48108, "alt_seed": 47589, "color": PALETTE[7], "positions": []},
-      {"seed": 61749, "alt_seed": 63411, "color": PALETTE[8], "positions": []},
-      {"seed": 10719, "alt_seed": 10409, "color": PALETTE[9], "positions": []},
+      {"seeds": [ 19283, 16481 ], "color": PALETTE[0], "positions": []},
+      {"seeds": [ 74982, 75818 ], "color": PALETTE[1], "positions": []},
+      {"seeds": [ 57319, 57284 ], "color": PALETTE[2], "positions": []},
+      {"seeds": [ 37198, 37417 ], "color": PALETTE[3], "positions": []},
+      {"seeds": [ 28391, 24864 ], "color": PALETTE[4], "positions": []},
+      {"seeds": [ 88172, 85728 ], "color": PALETTE[5], "positions": []},
+      {"seeds": [ 91647, 97418 ], "color": PALETTE[6], "positions": []},
+      {"seeds": [ 48108, 47589 ], "color": PALETTE[7], "positions": []},
+      {"seeds": [ 61749, 63411 ], "color": PALETTE[8], "positions": []},
+      {"seeds": [ 10719, 10409 ], "color": PALETTE[9], "positions": []},
     ];
     for (let tr of CTX.trails) {
       tr.positions.push([0, 0]);

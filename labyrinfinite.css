@@ -3,25 +3,61 @@ body {
   background: #444;
   color: #fff;
   font-family: serif;
+  font-size: 24pt;
 }
+
+input[type=button] {
+  /*-webkit-appearance: none;*/
+  /*appearance: none;*/
+  font-family: monospace;
+  background: #fff;
+  color: #000;
+  border: 1pt solid #bbb;
+  border-radius: 4pt;
+  font-size: 24pt;
+}
+
+input[type=button]:active {
+  background-color: #4488ff;
+  background-image: linear-gradient(#4488ff, #0044ff);
+}
+
+@supports (zoom:2) {
+  input[type=checkbox] {
+    zoom:2
+  }
+}
+@supports not (zoom:2) {
+  input[type=checkbox] {
+    transform: scale(2);
+  }
+}
+
 
 canvas {
-  border: 2px solid #222;
+  border: 2pt solid #222;
   background: #000;
-  border-radius: 4px;
+  border-radius: 8pt;
   position: absolute;
-  left: 2em;
-  width: calc(100vw - 4em);
-  top: 2em;
-  height: calc(100vh - 8em);
+  left: 1em;
+  width: calc(100vw - 2em);
+  top: 4em;
+  height: calc(100vh - 7em);
 }
 
-#controls {
+#top-controls {
+  top: 1em;
+}
+
+#bottom-controls {
+  top: calc(100vh - 2.25em);
+}
+
+.controls {
   position: absolute;
-  top: calc(100vh - 5em);
-  left: 2em;
+  left: 1em;
   text-align: center;
-  width: calc(100vw - 4em);
+  width: calc(100vw - 2em);
 }
 
 #sub_controls {

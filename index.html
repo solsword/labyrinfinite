@@ -8,19 +8,31 @@
   <script type="text/javascript" src="main.js"></script>
 </head>
 <body>
-  <canvas id="labyrinth" width="800" height="800" ></canvas>
-  <div id="controls">
+  <div class="controls" id="top-controls">
     <input type="button" value="#" onclick="set_mode('grid');"/>
     <input type="button" value="@" onclick="set_mode('wiggle');"/>
-    <div id="tempo_controls">
-      <!-- TODO: Find a font that has these music note characters -->
-      <!-- Sixteenth note: 𝅘𝅥𝅯  Half note: 𝅗𝅥 -->
-      <!-- Fireworks: 🎆 -->
-      <input id="slower" type="button" value="->-" onclick="adjust_tempo(1.5);"/>
-      <input id="faster" type="button" value=">>>" onclick="adjust_tempo(0.75);"/>
-    </div>
     <div id="sub_controls">
-      <input type="checkbox" id="attract_mode" checked="true"> O.O
+      <span class="attract_indicator">~</span>
+        <input
+          type="checkbox"
+          id="attract_mode"
+          checked="true"
+          onclick="toggle_attract_mode();"
+        />
+      <span class="attract_indicator">~</span>
+    </div>
+  </div>
+  <canvas id="labyrinth" width="800" height="800" ></canvas>
+  <div class="controls" id="bottom-controls">
+    <div id="tempo_controls">
+      <input
+        id="tempo"
+        type="range"
+        min="0"
+        max="1000"
+        value="500"
+        oninput="set_tempo(this.value/1000)"
+      />
     </div>
   </div>
 </body>
