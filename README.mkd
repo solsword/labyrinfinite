@@ -8,12 +8,6 @@ Infinite 2-D labyrinth, with code for moving from point to point.
 
 Javascript
 
-## TODO
-
-- Debug core generation
-- Get trails moving
-- Add pathfinding code (simple)
-
 ## How to Run
 
-Open index.html.
+Open index.html or follow this [link to the github.io page](https://solsword.github.io/labyrinfinite).
